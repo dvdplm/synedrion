@@ -1,10 +1,11 @@
-use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::fmt::Debug;
+use core::hash::Hash;
 
 use displaydoc::Display;
+use hashbrown::{HashMap, HashSet};
 use rand_core::CryptoRngCore;
 use serde::Serialize;
 
@@ -12,11 +13,11 @@ use super::generic::{FinalizableToNextRound, FinalizableToResult, ProtocolResult
 use super::FinalizeError;
 
 /// A simple identity type for tests.
-#[derive(Copy, Clone, Debug, PartialOrd, Ord, PartialEq, Eq, Serialize)]
+#[derive(Copy, Clone, Debug, Hash, PartialOrd, Ord, PartialEq, Eq, Serialize)]
 pub(crate) struct Id(pub(crate) u32);
 
 #[derive(Debug, Display)]
-pub(crate) enum StepError<I: Debug> {
+pub(crate) enum StepError<I: Debug + Hash> {
     /// Error when finalizing the round (missing messages).
     AccumFinalize,
     /// Error when verifying a received message.
@@ -27,28 +28,32 @@ pub(crate) enum StepError<I: Debug> {
     MessageToItself(I),
 }
 
-pub(crate) struct AssembledRound<I: Ord + Clone, R: Round<I>> {
+pub(crate) struct AssembledRound<I, R>
+where
+    I: Ord + Clone + Hash,
+    R: Round<I>,
+{
     round: R,
-    payloads: BTreeMap<I, <R as Round<I>>::Payload>,
-    artifacts: BTreeMap<I, <R as Round<I>>::Artifact>,
+    payloads: HashMap<I, <R as Round<I>>::Payload>,
+    artifacts: HashMap<I, <R as Round<I>>::Artifact>,
 }
 
 pub(crate) fn step_round<I, R>(
     rng: &mut impl CryptoRngCore,
-    rounds: BTreeMap<I, R>,
-) -> Result<BTreeMap<I, AssembledRound<I, R>>, StepError<I>>
+    rounds: HashMap<I, R>,
+) -> Result<HashMap<I, AssembledRound<I, R>>, StepError<I>>
 where
     R: Round<I>,
     <R as Round<I>>::BroadcastMessage: Clone,
-    I: Debug + Clone + Ord + PartialEq,
+    I: Debug + Clone + Hash + Ord + PartialEq,
 {
     // Collect outgoing messages
 
     let mut artifact_accums = rounds
         .keys()
         .cloned()
-        .map(|id| (id, BTreeMap::new()))
-        .collect::<BTreeMap<_, _>>();
+        .map(|id| (id, HashMap::new()))
+        .collect::<HashMap<_, _>>();
 
     // `to, from, message`
     let mut messages = Vec::<(
@@ -88,8 +93,8 @@ where
     let mut payload_accums = rounds
         .keys()
         .cloned()
-        .map(|id| (id, BTreeMap::new()))
-        .collect::<BTreeMap<_, _>>();
+        .map(|id| (id, HashMap::new()))
+        .collect::<HashMap<_, _>>();
     for (to, from, (broadcast, direct)) in messages.into_iter() {
         let round = &rounds[&to];
         let payload = round
@@ -100,11 +105,11 @@ where
 
     // Assemble
 
-    let mut assembled = BTreeMap::new();
+    let mut assembled = HashMap::new();
     for (id, round) in rounds.into_iter() {
         let (_, payloads) = payload_accums.remove_entry(&id).unwrap();
         let (_, artifacts) = artifact_accums.remove_entry(&id).unwrap();
-        let received = payloads.keys().cloned().collect::<BTreeSet<_>>();
+        let received = payloads.keys().cloned().collect::<HashSet<_>>();
         if !round.can_finalize(&received) {
             return Err(StepError::AccumFinalize);
         };
@@ -121,11 +126,15 @@ where
     Ok(assembled)
 }
 
-pub(crate) fn step_next_round<I: Ord + Clone, R: FinalizableToNextRound<I>>(
+pub(crate) fn step_next_round<I, R>(
     rng: &mut impl CryptoRngCore,
-    assembled_rounds: BTreeMap<I, AssembledRound<I, R>>,
-) -> Result<BTreeMap<I, R::NextRound>, FinalizeError<R::Result>> {
-    let mut results = BTreeMap::new();
+    assembled_rounds: HashMap<I, AssembledRound<I, R>>,
+) -> Result<HashMap<I, R::NextRound>, FinalizeError<R::Result>>
+where
+    I: Ord + Clone + Hash,
+    R: FinalizableToNextRound<I>,
+{
+    let mut results = HashMap::new();
     for (id, assembled_round) in assembled_rounds.into_iter() {
         let next_round = assembled_round.round.finalize_to_next_round(
             rng,
@@ -138,11 +147,15 @@ pub(crate) fn step_next_round<I: Ord + Clone, R: FinalizableToNextRound<I>>(
 }
 
 #[allow(clippy::type_complexity)]
-pub(crate) fn step_result<I: Ord + Clone, R: FinalizableToResult<I>>(
+pub(crate) fn step_result<I, R>(
     rng: &mut impl CryptoRngCore,
-    assembled_rounds: BTreeMap<I, AssembledRound<I, R>>,
-) -> Result<BTreeMap<I, <R::Result as ProtocolResult>::Success>, FinalizeError<R::Result>> {
-    let mut results = BTreeMap::new();
+    assembled_rounds: HashMap<I, AssembledRound<I, R>>,
+) -> Result<HashMap<I, <R::Result as ProtocolResult>::Success>, FinalizeError<R::Result>>
+where
+    I: Ord + Clone + Hash,
+    R: FinalizableToResult<I>,
+{
+    let mut results = HashMap::new();
     for (id, assembled_round) in assembled_rounds.into_iter() {
         let next_round = assembled_round.round.finalize_to_result(
             rng,
@@ -159,7 +172,7 @@ pub(crate) trait Without {
     fn without(self, item: &Self::Item) -> Self;
 }
 
-impl<T: Ord> Without for BTreeSet<T> {
+impl<T: Ord + Hash> Without for HashSet<T> {
     type Item = T;
     fn without(self, item: &Self::Item) -> Self {
         let mut set = self;

@@ -1,8 +1,8 @@
 use alloc::boxed::Box;
-use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::format;
 use alloc::vec::Vec;
-use core::fmt::Debug;
+use core::{fmt::Debug, hash::Hash};
+use hashbrown::{HashMap, HashSet};
 
 use rand_core::CryptoRngCore;
 use serde::{Deserialize, Serialize};
@@ -135,7 +135,8 @@ impl<Res, Sig, Signer, Verifier> Session<Res, Sig, Signer, Verifier>
 where
     Res: ProtocolResult,
     Signer: RandomizedPrehashSigner<Sig> + Keypair<VerifyingKey = Verifier>,
-    Verifier: Debug + Clone + PrehashVerifier<Sig> + Ord + Serialize + for<'de> Deserialize<'de>,
+    Verifier:
+        Debug + Clone + PrehashVerifier<Sig> + Ord + Serialize + for<'de> Deserialize<'de> + Hash,
     Sig: Clone + Serialize + for<'de> Deserialize<'de> + PartialEq + Eq,
 {
     pub(crate) fn new<
@@ -147,7 +148,7 @@ where
         rng: &mut impl CryptoRngCore,
         session_id: SessionId,
         signer: Signer,
-        verifiers: &BTreeSet<Verifier>,
+        verifiers: &HashSet<Verifier>,
         inputs: R::Inputs,
     ) -> Result<Self, LocalError> {
         let my_id = signer.verifying_key();
@@ -245,7 +246,7 @@ where
     pub fn missing_messages(
         &self,
         accum: &RoundAccumulator<Sig, Verifier>,
-    ) -> Result<BTreeSet<Verifier>, LocalError> {
+    ) -> Result<HashSet<Verifier>, LocalError> {
         match &self.tp {
             SessionType::Normal { this_round, .. } => {
                 Ok(this_round.missing_messages(&accum.processed))
@@ -267,14 +268,14 @@ where
     }
 
     /// Returns the party indices to which the messages of this round should be sent.
-    pub fn message_destinations(&self) -> &BTreeSet<Verifier> {
+    pub fn message_destinations(&self) -> &HashSet<Verifier> {
         match &self.tp {
             SessionType::Normal { this_round, .. } => this_round.message_destinations(),
             SessionType::Echo { echo_round, .. } => echo_round.message_destinations(),
         }
     }
 
-    fn expecting_messages_from(&self) -> &BTreeSet<Verifier> {
+    fn expecting_messages_from(&self) -> &HashSet<Verifier> {
         match &self.tp {
             SessionType::Normal { this_round, .. } => this_round.expecting_messages_from(),
             SessionType::Echo { echo_round, .. } => echo_round.expecting_messages_from(),
@@ -579,18 +580,21 @@ where
 
 /// A mutable accumulator created for each round to assemble processed messages from other parties.
 pub struct RoundAccumulator<Sig, Verifier> {
-    received_messages: BTreeMap<Verifier, VerifiedMessageBundle<Sig>>,
+    received_messages: HashMap<Verifier, VerifiedMessageBundle<Sig>>,
     processed: DynRoundAccum<Verifier>,
-    cached_messages: BTreeMap<Verifier, PreprocessedMessage<Sig, Verifier>>,
+    cached_messages: HashMap<Verifier, PreprocessedMessage<Sig, Verifier>>,
     echo_accum: Option<EchoAccum<Verifier>>,
 }
 
-impl<Sig, Verifier: Ord + Clone + Debug> RoundAccumulator<Sig, Verifier> {
+impl<Sig, Verifier> RoundAccumulator<Sig, Verifier>
+where
+    Verifier: Ord + Clone + Debug + Hash,
+{
     fn new(is_echo_round: bool) -> Self {
         Self {
-            received_messages: BTreeMap::new(),
+            received_messages: HashMap::new(),
             processed: DynRoundAccum::new(),
-            cached_messages: BTreeMap::new(),
+            cached_messages: HashMap::new(),
             echo_accum: if is_echo_round {
                 Some(EchoAccum::new())
             } else {

@@ -1,8 +1,9 @@
 use alloc::boxed::Box;
-use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
+use core::hash::Hash;
 
+use hashbrown::{HashMap, HashSet};
 use serde::{Deserialize, Serialize};
 
 use super::error::LocalError;
@@ -11,8 +12,8 @@ use super::type_erased::{deserialize_message, serialize_message};
 
 #[derive(Clone)]
 pub(crate) struct EchoRound<I, Sig> {
-    destinations: BTreeSet<I>,
-    broadcasts: BTreeMap<I, VerifiedMessage<Sig>>,
+    destinations: HashSet<I>,
+    broadcasts: HashMap<I, VerifiedMessage<Sig>>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -36,10 +37,10 @@ pub enum EchoError {
 
 impl<I, Sig> EchoRound<I, Sig>
 where
-    I: Clone + Ord + PartialEq + Serialize + for<'de> Deserialize<'de>,
+    I: Clone + Ord + PartialEq + Serialize + for<'de> Deserialize<'de> + Hash,
     Sig: Clone + Serialize + for<'de> Deserialize<'de> + PartialEq + Eq,
 {
-    pub fn new(broadcasts: BTreeMap<I, VerifiedMessage<Sig>>) -> Self {
+    pub fn new(broadcasts: HashMap<I, VerifiedMessage<Sig>>) -> Self {
         let destinations = broadcasts.keys().cloned().collect();
         Self {
             broadcasts,
@@ -47,11 +48,11 @@ where
         }
     }
 
-    pub fn message_destinations(&self) -> &BTreeSet<I> {
+    pub fn message_destinations(&self) -> &HashSet<I> {
         &self.destinations
     }
 
-    pub fn expecting_messages_from(&self) -> &BTreeSet<I> {
+    pub fn expecting_messages_from(&self) -> &HashSet<I> {
         &self.destinations
     }
 
@@ -73,7 +74,7 @@ where
             .map_err(|err| EchoError::CannotDeserialize(err.to_string()))?;
 
         // TODO (#68): check that there are no repeating indices, and the indices are in range.
-        let bc_map = message.broadcasts.into_iter().collect::<BTreeMap<_, _>>();
+        let bc_map = message.broadcasts.into_iter().collect::<HashMap<_, _>>();
 
         if bc_map.len() != self.broadcasts.len() {
             return Err(EchoError::UnexpectedNumberOfBroadcasts);
@@ -96,7 +97,7 @@ where
         Ok(())
     }
 
-    pub fn missing_messages(&self, accum: &EchoAccum<I>) -> BTreeSet<I> {
+    pub fn missing_messages(&self, accum: &EchoAccum<I>) -> HashSet<I> {
         self.expecting_messages_from()
             .difference(&accum.received_messages)
             .cloned()
@@ -119,13 +120,16 @@ where
 }
 
 pub(crate) struct EchoAccum<I> {
-    received_messages: BTreeSet<I>,
+    received_messages: HashSet<I>,
 }
 
-impl<I: Ord + Clone> EchoAccum<I> {
+impl<I> EchoAccum<I>
+where
+    I: Ord + Clone + Hash,
+{
     pub fn new() -> Self {
         Self {
-            received_messages: BTreeSet::new(),
+            received_messages: HashSet::new(),
         }
     }
 

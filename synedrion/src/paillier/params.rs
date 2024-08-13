@@ -1,4 +1,5 @@
 use core::fmt::Debug;
+use core::hash::Hash;
 
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroize;
@@ -15,14 +16,16 @@ pub trait PaillierParams: Debug + PartialEq + Eq + Clone + Send + Sync {
     const MODULUS_BITS: usize = Self::PRIME_BITS * 2;
     /// An integer that fits a single RSA prime.
     type HalfUint: UintLike<ModUint = Self::HalfUintMod>
+        + Hash
         + HasWide<Wide = Self::Uint>
         + Zeroize
         + Serialize
         + for<'de> Deserialize<'de>;
     /// A modulo-residue counterpart of `HalfUint`.
-    type HalfUintMod: UintModLike<RawUint = Self::HalfUint>;
+    type HalfUintMod: UintModLike<RawUint = Self::HalfUint> + Hash;
     /// An integer that fits the RSA modulus.
     type Uint: UintLike<ModUint = Self::UintMod>
+        + Hash
         + HasWide<Wide = Self::WideUint>
         + Zeroize
         + Serialize
@@ -55,6 +58,7 @@ pub(crate) struct PaillierTest;
 impl PaillierParams for PaillierTest {
     const PRIME_BITS: usize = 512;
     type HalfUint = U512;
+    // TODO(dp): this is a blocker. Can't impl Hash for the type because it's a foreign type.
     type HalfUintMod = U512Mod;
     type Uint = U1024;
     type UintMod = U1024Mod;

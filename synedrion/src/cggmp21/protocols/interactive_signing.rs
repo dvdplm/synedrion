@@ -1,8 +1,9 @@
 use alloc::boxed::Box;
-use alloc::collections::{BTreeMap, BTreeSet};
 use core::fmt::Debug;
+use core::hash::Hash;
 use core::marker::PhantomData;
 
+use hashbrown::{HashMap, HashSet};
 use rand_core::CryptoRngCore;
 use serde::Serialize;
 
@@ -85,7 +86,11 @@ impl<P: SchemeParams, I: Debug> CorrectnessProofWrapper<SigningResult<P, I>>
     }
 }
 
-struct Context<P: SchemeParams, I: Ord> {
+struct Context<P, I>
+where
+    P: SchemeParams,
+    I: Ord + Hash,
+{
     shared_randomness: Box<[u8]>,
     key_share: KeyShare<P, I>,
     aux_info: AuxInfo<P, I>,
@@ -93,23 +98,35 @@ struct Context<P: SchemeParams, I: Ord> {
 }
 
 #[derive(Clone)]
-pub(crate) struct Inputs<P: SchemeParams, I: Ord> {
+pub(crate) struct Inputs<P, I>
+where
+    P: SchemeParams,
+    I: Ord + Hash,
+{
     pub(crate) key_share: KeyShare<P, I>,
     pub(crate) aux_info: AuxInfo<P, I>,
     pub(crate) message: Scalar,
 }
 
-pub(crate) struct Round1<P: SchemeParams, I: Ord> {
+pub(crate) struct Round1<P, I>
+where
+    P: SchemeParams,
+    I: Ord + Hash,
+{
     round: presigning::Round1<P, I>,
     context: Context<P, I>,
 }
 
-impl<P: SchemeParams, I: Debug + Clone + Ord + Serialize> FirstRound<I> for Round1<P, I> {
+impl<P, I> FirstRound<I> for Round1<P, I>
+where
+    P: SchemeParams,
+    I: Debug + Clone + Ord + Serialize + Hash,
+{
     type Inputs = Inputs<P, I>;
     fn new(
         rng: &mut impl CryptoRngCore,
         shared_randomness: &[u8],
-        other_ids: BTreeSet<I>,
+        other_ids: HashSet<I>,
         my_id: I,
         inputs: Self::Inputs,
     ) -> Result<Self, InitError> {
@@ -130,7 +147,11 @@ impl<P: SchemeParams, I: Debug + Clone + Ord + Serialize> FirstRound<I> for Roun
     }
 }
 
-impl<P: SchemeParams, I: Debug + Clone + Ord + Serialize> RoundWrapper<I> for Round1<P, I> {
+impl<P, I> RoundWrapper<I> for Round1<P, I>
+where
+    P: SchemeParams,
+    I: Debug + Clone + Ord + Serialize + Hash,
+{
     type Type = ToNextRound;
     type Result = InteractiveSigningResult<P, I>;
     type InnerRound = presigning::Round1<P, I>;
@@ -141,17 +162,24 @@ impl<P: SchemeParams, I: Debug + Clone + Ord + Serialize> RoundWrapper<I> for Ro
     }
 }
 
-impl<P: SchemeParams, I: Ord> WrappedRound for Round1<P, I> {}
+impl<P, I> WrappedRound for Round1<P, I>
+where
+    P: SchemeParams,
+    I: Ord + Hash,
+{
+}
 
-impl<P: SchemeParams, I: Debug + Clone + Ord + Serialize> FinalizableToNextRound<I>
-    for Round1<P, I>
+impl<P, I> FinalizableToNextRound<I> for Round1<P, I>
+where
+    P: SchemeParams,
+    I: Debug + Clone + Ord + Serialize + Hash,
 {
     type NextRound = Round2<P, I>;
     fn finalize_to_next_round(
         self,
         rng: &mut impl CryptoRngCore,
-        payloads: BTreeMap<I, <Self as Round<I>>::Payload>,
-        artifacts: BTreeMap<I, <Self as Round<I>>::Artifact>,
+        payloads: HashMap<I, <Self as Round<I>>::Payload>,
+        artifacts: HashMap<I, <Self as Round<I>>::Artifact>,
     ) -> Result<Self::NextRound, FinalizeError<Self::Result>> {
         let round = self
             .round
@@ -164,12 +192,20 @@ impl<P: SchemeParams, I: Debug + Clone + Ord + Serialize> FinalizableToNextRound
     }
 }
 
-pub(crate) struct Round2<P: SchemeParams, I: Ord> {
+pub(crate) struct Round2<P, I>
+where
+    P: SchemeParams,
+    I: Ord + Hash,
+{
     round: presigning::Round2<P, I>,
     context: Context<P, I>,
 }
 
-impl<P: SchemeParams, I: Debug + Clone + Ord + Serialize> RoundWrapper<I> for Round2<P, I> {
+impl<P, I> RoundWrapper<I> for Round2<P, I>
+where
+    P: SchemeParams,
+    I: Debug + Clone + Ord + Serialize + Hash,
+{
     type Type = ToNextRound;
     type Result = InteractiveSigningResult<P, I>;
     type InnerRound = presigning::Round2<P, I>;
@@ -180,17 +216,24 @@ impl<P: SchemeParams, I: Debug + Clone + Ord + Serialize> RoundWrapper<I> for Ro
     }
 }
 
-impl<P: SchemeParams, I: Ord> WrappedRound for Round2<P, I> {}
+impl<P, I> WrappedRound for Round2<P, I>
+where
+    P: SchemeParams,
+    I: Ord + Hash,
+{
+}
 
-impl<P: SchemeParams, I: Debug + Clone + Ord + Serialize> FinalizableToNextRound<I>
-    for Round2<P, I>
+impl<P, I> FinalizableToNextRound<I> for Round2<P, I>
+where
+    P: SchemeParams,
+    I: Debug + Clone + Ord + Serialize + Hash,
 {
     type NextRound = Round3<P, I>;
     fn finalize_to_next_round(
         self,
         rng: &mut impl CryptoRngCore,
-        payloads: BTreeMap<I, <Self as Round<I>>::Payload>,
-        artifacts: BTreeMap<I, <Self as Round<I>>::Artifact>,
+        payloads: HashMap<I, <Self as Round<I>>::Payload>,
+        artifacts: HashMap<I, <Self as Round<I>>::Artifact>,
     ) -> Result<Self::NextRound, FinalizeError<Self::Result>> {
         let round = self
             .round
@@ -203,12 +246,20 @@ impl<P: SchemeParams, I: Debug + Clone + Ord + Serialize> FinalizableToNextRound
     }
 }
 
-pub(crate) struct Round3<P: SchemeParams, I: Ord> {
+pub(crate) struct Round3<P, I>
+where
+    P: SchemeParams,
+    I: Ord + Hash,
+{
     round: presigning::Round3<P, I>,
     context: Context<P, I>,
 }
 
-impl<P: SchemeParams, I: Debug + Clone + Ord + Serialize> RoundWrapper<I> for Round3<P, I> {
+impl<P, I> RoundWrapper<I> for Round3<P, I>
+where
+    P: SchemeParams,
+    I: Debug + Clone + Ord + Serialize + Hash,
+{
     type Type = ToNextRound;
     type Result = InteractiveSigningResult<P, I>;
     type InnerRound = presigning::Round3<P, I>;
@@ -219,17 +270,24 @@ impl<P: SchemeParams, I: Debug + Clone + Ord + Serialize> RoundWrapper<I> for Ro
     }
 }
 
-impl<P: SchemeParams, I: Ord> WrappedRound for Round3<P, I> {}
+impl<P, I> WrappedRound for Round3<P, I>
+where
+    P: SchemeParams,
+    I: Ord + Hash,
+{
+}
 
-impl<P: SchemeParams, I: Debug + Clone + Ord + Serialize> FinalizableToNextRound<I>
-    for Round3<P, I>
+impl<P, I> FinalizableToNextRound<I> for Round3<P, I>
+where
+    P: SchemeParams,
+    I: Debug + Clone + Ord + Serialize + Hash,
 {
     type NextRound = Round4<P, I>;
     fn finalize_to_next_round(
         self,
         rng: &mut impl CryptoRngCore,
-        payloads: BTreeMap<I, <Self as Round<I>>::Payload>,
-        artifacts: BTreeMap<I, <Self as Round<I>>::Artifact>,
+        payloads: HashMap<I, <Self as Round<I>>::Payload>,
+        artifacts: HashMap<I, <Self as Round<I>>::Artifact>,
     ) -> Result<Self::NextRound, FinalizeError<Self::Result>> {
         let other_ids = self.other_ids().clone();
         let my_id = self.my_id().clone();
@@ -258,11 +316,19 @@ impl<P: SchemeParams, I: Debug + Clone + Ord + Serialize> FinalizableToNextRound
     }
 }
 
-pub(crate) struct Round4<P: SchemeParams, I: Ord> {
+pub(crate) struct Round4<P, I>
+where
+    P: SchemeParams,
+    I: Ord + Hash,
+{
     round: signing::Round1<P, I>,
 }
 
-impl<P: SchemeParams, I: Debug + Clone + Ord + Serialize> RoundWrapper<I> for Round4<P, I> {
+impl<P, I> RoundWrapper<I> for Round4<P, I>
+where
+    P: SchemeParams,
+    I: Debug + Clone + Ord + Serialize + Hash,
+{
     type Type = ToResult;
     type Result = InteractiveSigningResult<P, I>;
     type InnerRound = signing::Round1<P, I>;
@@ -273,14 +339,23 @@ impl<P: SchemeParams, I: Debug + Clone + Ord + Serialize> RoundWrapper<I> for Ro
     }
 }
 
-impl<P: SchemeParams, I: Ord> WrappedRound for Round4<P, I> {}
+impl<P, I> WrappedRound for Round4<P, I>
+where
+    P: SchemeParams,
+    I: Ord + Hash,
+{
+}
 
-impl<P: SchemeParams, I: Debug + Clone + Ord + Serialize> FinalizableToResult<I> for Round4<P, I> {
+impl<P, I> FinalizableToResult<I> for Round4<P, I>
+where
+    P: SchemeParams,
+    I: Debug + Clone + Ord + Serialize + Hash,
+{
     fn finalize_to_result(
         self,
         rng: &mut impl CryptoRngCore,
-        payloads: BTreeMap<I, <Self as Round<I>>::Payload>,
-        artifacts: BTreeMap<I, <Self as Round<I>>::Artifact>,
+        payloads: HashMap<I, <Self as Round<I>>::Payload>,
+        artifacts: HashMap<I, <Self as Round<I>>::Artifact>,
     ) -> Result<<Self::Result as ProtocolResult>::Success, FinalizeError<Self::Result>> {
         self.round
             .finalize_to_result(rng, payloads, artifacts)
@@ -290,8 +365,8 @@ impl<P: SchemeParams, I: Debug + Clone + Ord + Serialize> FinalizableToResult<I>
 
 #[cfg(test)]
 mod tests {
-    use alloc::collections::BTreeSet;
 
+    use hashbrown::HashSet;
     use k256::ecdsa::{signature::hazmat::PrehashVerifier, VerifyingKey};
     use rand_core::{OsRng, RngCore};
 
@@ -310,7 +385,7 @@ mod tests {
 
         let message = Scalar::random(&mut OsRng);
 
-        let ids = BTreeSet::from([Id(0), Id(1), Id(2)]);
+        let ids = HashSet::from([Id(0), Id(1), Id(2)]);
 
         let key_shares = KeyShare::new_centralized(&mut OsRng, &ids, None);
         let aux_infos = AuxInfo::new_centralized(&mut OsRng, &ids);

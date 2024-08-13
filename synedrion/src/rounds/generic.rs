@@ -1,20 +1,23 @@
-use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::string::String;
-use core::fmt::Debug;
+use core::{fmt::Debug, hash::Hash};
 
 use displaydoc::Display;
+use hashbrown::{HashMap, HashSet};
 use rand_core::CryptoRngCore;
 use serde::{Deserialize, Serialize};
 
 /// A round that sends out direct messages.
-pub(crate) trait Round<I: Ord + Clone> {
+pub(crate) trait Round<I>
+where
+    I: Ord + Clone + Hash,
+{
     type Type: FinalizableType;
     type Result: ProtocolResult;
     const ROUND_NUM: u8;
     // TODO (#78): find a way to derive it from `ROUND_NUM`
     const NEXT_ROUND_NUM: Option<u8>;
 
-    fn other_ids(&self) -> &BTreeSet<I>;
+    fn other_ids(&self) -> &HashSet<I>;
     fn my_id(&self) -> &I;
 
     /// The part of the message sent directly to nodes, and can be different for each node.
@@ -36,11 +39,11 @@ pub(crate) trait Round<I: Ord + Clone> {
     // Assuming these destinations are for both broadcast and direct messages;
     // the broadcasts are only separated to allow optimizations (create once, sign once)
     // and support echo-broadcasting.
-    fn message_destinations(&self) -> &BTreeSet<I> {
+    fn message_destinations(&self) -> &HashSet<I> {
         self.other_ids()
     }
 
-    fn expecting_messages_from(&self) -> &BTreeSet<I> {
+    fn expecting_messages_from(&self) -> &HashSet<I> {
         self.other_ids()
     }
 
@@ -76,14 +79,14 @@ pub(crate) trait Round<I: Ord + Clone> {
         FinalizationRequirement::All
     }
 
-    fn can_finalize(&self, received: &BTreeSet<I>) -> bool {
+    fn can_finalize(&self, received: &HashSet<I>) -> bool {
         match Self::finalization_requirement() {
             FinalizationRequirement::All => self.other_ids().is_subset(received),
             FinalizationRequirement::Custom => panic!("`can_finalize` must be implemented"),
         }
     }
 
-    fn missing_messages(&self, received: &BTreeSet<I>) -> BTreeSet<I> {
+    fn missing_messages(&self, received: &HashSet<I>) -> HashSet<I> {
         match Self::finalization_requirement() {
             FinalizationRequirement::All => {
                 self.other_ids().difference(received).cloned().collect()
@@ -128,24 +131,28 @@ pub(crate) enum FinalizationRequirement {
     Custom,
 }
 
-pub(crate) trait FinalizableToResult<I: Ord + Clone>: Round<I, Type = ToResult> {
+pub(crate) trait FinalizableToResult<I>: Round<I, Type = ToResult>
+where
+    I: Ord + Clone + Hash,
+{
     fn finalize_to_result(
         self,
         rng: &mut impl CryptoRngCore,
-        payloads: BTreeMap<I, <Self as Round<I>>::Payload>,
-        artifacts: BTreeMap<I, <Self as Round<I>>::Artifact>,
+        payloads: HashMap<I, <Self as Round<I>>::Payload>,
+        artifacts: HashMap<I, <Self as Round<I>>::Artifact>,
     ) -> Result<<Self::Result as ProtocolResult>::Success, FinalizeError<Self::Result>>;
 }
 
-pub(crate) trait FinalizableToNextRound<I: Ord + Clone>:
-    Round<I, Type = ToNextRound>
+pub(crate) trait FinalizableToNextRound<I>: Round<I, Type = ToNextRound>
+where
+    I: Ord + Clone + Hash,
 {
     type NextRound: Round<I, Result = Self::Result>;
     fn finalize_to_next_round(
         self,
         rng: &mut impl CryptoRngCore,
-        payloads: BTreeMap<I, <Self as Round<I>>::Payload>,
-        artifacts: BTreeMap<I, <Self as Round<I>>::Artifact>,
+        payloads: HashMap<I, <Self as Round<I>>::Payload>,
+        artifacts: HashMap<I, <Self as Round<I>>::Artifact>,
     ) -> Result<Self::NextRound, FinalizeError<Self::Result>>;
 }
 
@@ -162,12 +169,15 @@ pub enum FinalizeError<Res: ProtocolResult> {
 #[displaydoc("Error when initializing a protocol ({0})")]
 pub struct InitError(pub(crate) String);
 
-pub(crate) trait FirstRound<I: Ord + Clone>: Round<I> + Sized {
+pub(crate) trait FirstRound<I>: Round<I> + Sized
+where
+    I: Ord + Clone + Hash,
+{
     type Inputs;
     fn new(
         rng: &mut impl CryptoRngCore,
         shared_randomness: &[u8],
-        other_ids: BTreeSet<I>,
+        other_ids: HashSet<I>,
         my_id: I,
         inputs: Self::Inputs,
     ) -> Result<Self, InitError>;

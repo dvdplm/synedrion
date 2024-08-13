@@ -1,10 +1,11 @@
 //! Signing using previously calculated presigning data, in the paper ECDSA Signing (Fig. 8).
 
-use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::vec::Vec;
 use core::fmt::Debug;
+use core::hash::Hash;
 use core::marker::PhantomData;
 
+use hashbrown::{HashMap, HashSet};
 use rand_core::CryptoRngCore;
 use secrecy::ExposeSecret;
 use serde::{Deserialize, Serialize};
@@ -41,30 +42,38 @@ pub struct SigningProof<P: SchemeParams, I> {
     dec_proofs: Vec<(I, DecProof<P>)>,
 }
 
-pub struct Round1<P: SchemeParams, I: Ord> {
+pub struct Round1<P, I>
+where
+    P: SchemeParams,
+    I: Ord + Hash,
+{
     ssid_hash: HashOutput,
     r: Scalar,
     sigma: Scalar,
     inputs: Inputs<P, I>,
     aux_info: AuxInfoPrecomputed<P, I>,
-    other_ids: BTreeSet<I>,
+    other_ids: HashSet<I>,
     my_id: I,
 }
 
 #[derive(Clone)]
-pub struct Inputs<P: SchemeParams, I: Ord> {
+pub struct Inputs<P: SchemeParams, I: Ord + Hash> {
     pub message: Scalar,
     pub presigning: PresigningData<P, I>,
     pub key_share: KeyShare<P, I>,
     pub aux_info: AuxInfo<P, I>,
 }
 
-impl<P: SchemeParams, I: Debug + Clone + Ord + Serialize> FirstRound<I> for Round1<P, I> {
+impl<P, I> FirstRound<I> for Round1<P, I>
+where
+    P: SchemeParams,
+    I: Debug + Clone + Ord + Serialize + Hash,
+{
     type Inputs = Inputs<P, I>;
     fn new(
         _rng: &mut impl CryptoRngCore,
         shared_randomness: &[u8],
-        other_ids: BTreeSet<I>,
+        other_ids: HashSet<I>,
         my_id: I,
         inputs: Self::Inputs,
     ) -> Result<Self, InitError> {
@@ -102,13 +111,17 @@ pub struct Round1Payload {
     sigma: Scalar,
 }
 
-impl<P: SchemeParams, I: Debug + Clone + Ord + Serialize> Round<I> for Round1<P, I> {
+impl<P, I> Round<I> for Round1<P, I>
+where
+    P: SchemeParams,
+    I: Debug + Clone + Ord + Serialize + Hash,
+{
     type Type = ToResult;
     type Result = SigningResult<P, I>;
     const ROUND_NUM: u8 = 1;
     const NEXT_ROUND_NUM: Option<u8> = None;
 
-    fn other_ids(&self) -> &BTreeSet<I> {
+    fn other_ids(&self) -> &HashSet<I> {
         &self.other_ids
     }
 
@@ -143,12 +156,16 @@ impl<P: SchemeParams, I: Debug + Clone + Ord + Serialize> Round<I> for Round1<P,
     }
 }
 
-impl<P: SchemeParams, I: Debug + Clone + Ord + Serialize> FinalizableToResult<I> for Round1<P, I> {
+impl<P, I> FinalizableToResult<I> for Round1<P, I>
+where
+    P: SchemeParams,
+    I: Debug + Clone + Ord + Serialize + Hash,
+{
     fn finalize_to_result(
         self,
         rng: &mut impl CryptoRngCore,
-        payloads: BTreeMap<I, <Self as Round<I>>::Payload>,
-        _artifacts: BTreeMap<I, <Self as Round<I>>::Artifact>,
+        payloads: HashMap<I, <Self as Round<I>>::Payload>,
+        _artifacts: HashMap<I, <Self as Round<I>>::Artifact>,
     ) -> Result<<Self::Result as ProtocolResult>::Success, FinalizeError<Self::Result>> {
         let assembled_sigma = payloads
             .values()
@@ -311,8 +328,7 @@ impl<P: SchemeParams, I: Debug + Clone + Ord + Serialize> FinalizableToResult<I>
 
 #[cfg(test)]
 mod tests {
-    use alloc::collections::BTreeSet;
-
+    use hashbrown::HashSet;
     use k256::ecdsa::{signature::hazmat::PrehashVerifier, VerifyingKey};
     use rand_core::{OsRng, RngCore};
 
@@ -329,12 +345,16 @@ mod tests {
         let mut shared_randomness = [0u8; 32];
         OsRng.fill_bytes(&mut shared_randomness);
 
-        let ids = BTreeSet::from([Id(0), Id(1), Id(2)]);
+        let ids = HashSet::from([Id(0), Id(1), Id(2)]);
 
         let key_shares = KeyShare::new_centralized(&mut OsRng, &ids, None);
         let aux_infos = AuxInfo::new_centralized(&mut OsRng, &ids);
 
-        let presigning_datas = PresigningData::new_centralized(&mut OsRng, &key_shares, &aux_infos);
+        let presigning_datas = PresigningData::new_centralized(
+            &mut OsRng,
+            &key_shares,
+            &aux_infos.clone().into_iter().collect(),
+        );
 
         let message = Scalar::random(&mut OsRng);
 

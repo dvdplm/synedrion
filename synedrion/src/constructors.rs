@@ -1,5 +1,5 @@
-use alloc::collections::BTreeSet;
-use core::fmt::Debug;
+use core::{fmt::Debug, hash::Hash};
+use hashbrown::HashSet;
 
 use rand_core::CryptoRngCore;
 use serde::{Deserialize, Serialize};
@@ -25,7 +25,7 @@ pub fn make_key_init_session<P, Sig, Signer, Verifier>(
     rng: &mut impl CryptoRngCore,
     session_id: SessionId,
     signer: Signer,
-    verifiers: &BTreeSet<Verifier>,
+    verifiers: &HashSet<Verifier>,
 ) -> Result<Session<KeyInitResult<P, Verifier>, Sig, Signer, Verifier>, LocalError>
 where
     Sig: Clone + Serialize + for<'de> Deserialize<'de> + PartialEq + Eq,
@@ -34,6 +34,7 @@ where
     Verifier: PrehashVerifier<Sig>
         + Debug
         + Clone
+        + Hash
         + Ord
         + Serialize
         + for<'de> Deserialize<'de>
@@ -49,7 +50,7 @@ pub fn make_key_gen_session<P, Sig, Signer, Verifier>(
     rng: &mut impl CryptoRngCore,
     session_id: SessionId,
     signer: Signer,
-    verifiers: &BTreeSet<Verifier>,
+    verifiers: &HashSet<Verifier>,
 ) -> Result<Session<KeyGenResult<P, Verifier>, Sig, Signer, Verifier>, LocalError>
 where
     Sig: Clone + Serialize + for<'de> Deserialize<'de> + PartialEq + Eq,
@@ -58,6 +59,7 @@ where
     Verifier: PrehashVerifier<Sig>
         + Debug
         + Clone
+        + Hash
         + Ord
         + Serialize
         + for<'de> Deserialize<'de>
@@ -73,7 +75,7 @@ pub fn make_aux_gen_session<P, Sig, Signer, Verifier>(
     rng: &mut impl CryptoRngCore,
     session_id: SessionId,
     signer: Signer,
-    verifiers: &BTreeSet<Verifier>,
+    verifiers: &HashSet<Verifier>,
 ) -> Result<Session<AuxGenResult<P, Verifier>, Sig, Signer, Verifier>, LocalError>
 where
     Sig: Clone + Serialize + for<'de> Deserialize<'de> + PartialEq + Eq,
@@ -83,6 +85,7 @@ where
         + Debug
         + Clone
         + Ord
+        + Hash
         + Serialize
         + for<'de> Deserialize<'de>
         + Send
@@ -97,7 +100,7 @@ pub fn make_key_refresh_session<P, Sig, Signer, Verifier>(
     rng: &mut impl CryptoRngCore,
     session_id: SessionId,
     signer: Signer,
-    verifiers: &BTreeSet<Verifier>,
+    verifiers: &HashSet<Verifier>,
 ) -> Result<Session<KeyRefreshResult<P, Verifier>, Sig, Signer, Verifier>, LocalError>
 where
     Sig: Clone + Serialize + for<'de> Deserialize<'de> + PartialEq + Eq,
@@ -107,6 +110,7 @@ where
         + Debug
         + Clone
         + Ord
+        + Hash
         + Serialize
         + for<'de> Deserialize<'de>
         + Send
@@ -121,7 +125,7 @@ pub fn make_interactive_signing_session<P, Sig, Signer, Verifier>(
     rng: &mut impl CryptoRngCore,
     session_id: SessionId,
     signer: Signer,
-    verifiers: &BTreeSet<Verifier>,
+    verifiers: &HashSet<Verifier>,
     key_share: &KeyShare<P, Verifier>,
     aux_info: &AuxInfo<P, Verifier>,
     prehashed_message: &PrehashedMessage,
@@ -134,6 +138,7 @@ where
         + Debug
         + Clone
         + Ord
+        + Hash
         + Serialize
         + for<'de> Deserialize<'de>
         + Send
@@ -165,7 +170,7 @@ pub fn make_key_resharing_session<P, Sig, Signer, Verifier>(
     rng: &mut impl CryptoRngCore,
     session_id: SessionId,
     signer: Signer,
-    verifiers: &BTreeSet<Verifier>,
+    verifiers: &HashSet<Verifier>,
     inputs: KeyResharingInputs<P, Verifier>,
 ) -> Result<Session<KeyResharingResult<P, Verifier>, Sig, Signer, Verifier>, LocalError>
 where
@@ -176,13 +181,14 @@ where
         + Debug
         + Clone
         + Ord
+        + Hash
         + Serialize
         + for<'de> Deserialize<'de>
         + Send
         + Sync
         + 'static,
 {
-    let verifiers_set = BTreeSet::from_iter(verifiers.iter().cloned());
+    let verifiers_set = HashSet::from_iter(verifiers.iter().cloned());
 
     if !inputs.new_holders.is_subset(&verifiers_set) {
         return Err(LocalError(

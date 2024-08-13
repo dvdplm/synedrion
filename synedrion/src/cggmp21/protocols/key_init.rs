@@ -3,10 +3,11 @@
 //! auxiliary parameters need to be generated as well (during the KeyRefresh protocol).
 
 use alloc::boxed::Box;
-use alloc::collections::{BTreeMap, BTreeSet};
 use core::fmt::Debug;
+use core::hash::Hash;
 use core::marker::PhantomData;
 
+use hashbrown::{HashMap, HashSet};
 use rand_core::CryptoRngCore;
 use secrecy::SecretBox;
 use serde::{Deserialize, Serialize};
@@ -27,7 +28,11 @@ use crate::tools::hashing::{Chain, FofHasher, HashOutput};
 #[derive(Debug, Clone, Copy)]
 pub struct KeyInitResult<P: SchemeParams, I: Debug>(PhantomData<P>, PhantomData<I>);
 
-impl<P: SchemeParams, I: Debug + Ord> ProtocolResult for KeyInitResult<P, I> {
+impl<P, I> ProtocolResult for KeyInitResult<P, I>
+where
+    P: SchemeParams,
+    I: Debug + Ord + Hash,
+{
     type Success = KeyShare<P, I>;
     type ProvableError = KeyInitError;
     type CorrectnessProof = ();
@@ -62,7 +67,7 @@ impl<P: SchemeParams> PublicData<P> {
 }
 
 struct Context<P: SchemeParams, I> {
-    other_ids: BTreeSet<I>,
+    other_ids: HashSet<I>,
     my_id: I,
     x: Scalar,
     tau: SchSecret,
@@ -74,13 +79,17 @@ pub struct Round1<P: SchemeParams, I> {
     context: Context<P, I>,
 }
 
-impl<P: SchemeParams, I: Clone + Ord + Serialize + Debug> FirstRound<I> for Round1<P, I> {
+impl<P, I> FirstRound<I> for Round1<P, I>
+where
+    P: SchemeParams,
+    I: Clone + Ord + Serialize + Debug + Hash,
+{
     type Inputs = ();
 
     fn new(
         rng: &mut impl CryptoRngCore,
         shared_randomness: &[u8],
-        other_ids: BTreeSet<I>,
+        other_ids: HashSet<I>,
         my_id: I,
         _inputs: Self::Inputs,
     ) -> Result<Self, InitError> {
@@ -133,13 +142,17 @@ pub struct Round1Payload {
     cap_v: HashOutput,
 }
 
-impl<P: SchemeParams, I: Clone + Ord + Serialize + Debug> Round<I> for Round1<P, I> {
+impl<P, I> Round<I> for Round1<P, I>
+where
+    P: SchemeParams,
+    I: Clone + Ord + Serialize + Debug + Hash,
+{
     type Type = ToNextRound;
     type Result = KeyInitResult<P, I>;
     const ROUND_NUM: u8 = 1;
     const NEXT_ROUND_NUM: Option<u8> = Some(2);
 
-    fn other_ids(&self) -> &BTreeSet<I> {
+    fn other_ids(&self) -> &HashSet<I> {
         &self.context.other_ids
     }
 
@@ -179,15 +192,17 @@ impl<P: SchemeParams, I: Clone + Ord + Serialize + Debug> Round<I> for Round1<P,
     }
 }
 
-impl<P: SchemeParams, I: Serialize + Ord + Clone + Debug> FinalizableToNextRound<I>
-    for Round1<P, I>
+impl<P, I> FinalizableToNextRound<I> for Round1<P, I>
+where
+    P: SchemeParams,
+    I: Serialize + Ord + Clone + Debug + Hash,
 {
     type NextRound = Round2<P, I>;
     fn finalize_to_next_round(
         self,
         _rng: &mut impl CryptoRngCore,
-        payloads: BTreeMap<I, <Self as Round<I>>::Payload>,
-        _artifacts: BTreeMap<I, <Self as Round<I>>::Artifact>,
+        payloads: HashMap<I, <Self as Round<I>>::Payload>,
+        _artifacts: HashMap<I, <Self as Round<I>>::Artifact>,
     ) -> Result<Self::NextRound, FinalizeError<Self::Result>> {
         Ok(Round2 {
             others_cap_v: payloads.into_iter().map(|(k, v)| (k, v.cap_v)).collect(),
@@ -199,7 +214,7 @@ impl<P: SchemeParams, I: Serialize + Ord + Clone + Debug> FinalizableToNextRound
 
 pub struct Round2<P: SchemeParams, I> {
     context: Context<P, I>,
-    others_cap_v: BTreeMap<I, HashOutput>,
+    others_cap_v: HashMap<I, HashOutput>,
     phantom: PhantomData<P>,
 }
 
@@ -214,13 +229,17 @@ pub struct Round2Payload<P: SchemeParams> {
     data: PublicData<P>,
 }
 
-impl<P: SchemeParams, I: Serialize + Ord + Clone + Debug> Round<I> for Round2<P, I> {
+impl<P, I> Round<I> for Round2<P, I>
+where
+    P: SchemeParams,
+    I: Serialize + Ord + Clone + Debug + Hash,
+{
     type Type = ToNextRound;
     type Result = KeyInitResult<P, I>;
     const ROUND_NUM: u8 = 2;
     const NEXT_ROUND_NUM: Option<u8> = Some(3);
 
-    fn other_ids(&self) -> &BTreeSet<I> {
+    fn other_ids(&self) -> &HashSet<I> {
         &self.context.other_ids
     }
 
@@ -263,15 +282,17 @@ impl<P: SchemeParams, I: Serialize + Ord + Clone + Debug> Round<I> for Round2<P,
     }
 }
 
-impl<P: SchemeParams, I: Serialize + Ord + Clone + Debug> FinalizableToNextRound<I>
-    for Round2<P, I>
+impl<P, I> FinalizableToNextRound<I> for Round2<P, I>
+where
+    P: SchemeParams,
+    I: Serialize + Ord + Clone + Debug + Hash,
 {
     type NextRound = Round3<P, I>;
     fn finalize_to_next_round(
         self,
         _rng: &mut impl CryptoRngCore,
-        payloads: BTreeMap<I, <Self as Round<I>>::Payload>,
-        _artifacts: BTreeMap<I, <Self as Round<I>>::Artifact>,
+        payloads: HashMap<I, <Self as Round<I>>::Payload>,
+        _artifacts: HashMap<I, <Self as Round<I>>::Artifact>,
     ) -> Result<Self::NextRound, FinalizeError<Self::Result>> {
         let mut rid = self.context.public_data.rid.clone();
         for payload in payloads.values() {
@@ -289,7 +310,7 @@ impl<P: SchemeParams, I: Serialize + Ord + Clone + Debug> FinalizableToNextRound
 
 pub struct Round3<P: SchemeParams, I> {
     context: Context<P, I>,
-    others_data: BTreeMap<I, PublicData<P>>,
+    others_data: HashMap<I, PublicData<P>>,
     rid: BitVec,
     phantom: PhantomData<P>,
 }
@@ -299,13 +320,17 @@ pub struct Round3Message {
     psi: SchProof,
 }
 
-impl<P: SchemeParams, I: Serialize + Ord + Clone + Debug> Round<I> for Round3<P, I> {
+impl<P, I> Round<I> for Round3<P, I>
+where
+    P: SchemeParams,
+    I: Serialize + Ord + Clone + Debug + Hash,
+{
     type Type = ToResult;
     type Result = KeyInitResult<P, I>;
     const ROUND_NUM: u8 = 3;
     const NEXT_ROUND_NUM: Option<u8> = None;
 
-    fn other_ids(&self) -> &BTreeSet<I> {
+    fn other_ids(&self) -> &HashSet<I> {
         &self.context.other_ids
     }
 
@@ -352,19 +377,23 @@ impl<P: SchemeParams, I: Serialize + Ord + Clone + Debug> Round<I> for Round3<P,
     }
 }
 
-impl<P: SchemeParams, I: Serialize + Clone + Ord + Debug> FinalizableToResult<I> for Round3<P, I> {
+impl<P, I> FinalizableToResult<I> for Round3<P, I>
+where
+    P: SchemeParams,
+    I: Serialize + Clone + Ord + Debug + Hash,
+{
     fn finalize_to_result(
         self,
         _rng: &mut impl CryptoRngCore,
-        _payloads: BTreeMap<I, <Self as Round<I>>::Payload>,
-        _artifacts: BTreeMap<I, <Self as Round<I>>::Artifact>,
+        _payloads: HashMap<I, <Self as Round<I>>::Payload>,
+        _artifacts: HashMap<I, <Self as Round<I>>::Artifact>,
     ) -> Result<<Self::Result as ProtocolResult>::Success, FinalizeError<Self::Result>> {
         let my_id = self.my_id().clone();
         let mut public_shares = self
             .others_data
             .into_iter()
             .map(|(k, v)| (k, v.cap_x))
-            .collect::<BTreeMap<_, _>>();
+            .collect::<HashMap<_, _>>();
         public_shares.insert(my_id.clone(), self.context.public_data.cap_x);
         Ok(KeyShare {
             owner: my_id,
@@ -377,8 +406,7 @@ impl<P: SchemeParams, I: Serialize + Clone + Ord + Debug> FinalizableToResult<I>
 
 #[cfg(test)]
 mod tests {
-    use alloc::collections::{BTreeMap, BTreeSet};
-
+    use hashbrown::{HashMap, HashSet};
     use rand_core::{OsRng, RngCore};
     use secrecy::ExposeSecret;
 
@@ -394,7 +422,7 @@ mod tests {
         let mut shared_randomness = [0u8; 32];
         OsRng.fill_bytes(&mut shared_randomness);
 
-        let ids = BTreeSet::from([Id(0), Id(1), Id(2)]);
+        let ids = HashSet::from([Id(0), Id(1), Id(2)]);
 
         let r1 = ids
             .iter()
@@ -423,7 +451,7 @@ mod tests {
         let public_sets = shares
             .iter()
             .map(|(id, share)| (*id, share.public_shares.clone()))
-            .collect::<BTreeMap<_, _>>();
+            .collect::<HashMap<_, _>>();
 
         assert!(public_sets.values().all(|pk| pk == &public_sets[&Id(0)]));
 

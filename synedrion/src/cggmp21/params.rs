@@ -1,4 +1,5 @@
 use core::fmt::Debug;
+use core::hash::Hash;
 
 use crate::curve::{Curve, Scalar, ORDER};
 use crate::paillier::PaillierParams;
@@ -10,7 +11,7 @@ use crate::uint::{
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Copy, Clone, Hash, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PaillierTest;
 
 impl PaillierParams for PaillierTest {
@@ -65,12 +66,13 @@ impl PaillierParams for PaillierTest {
     type ExtraWideUint = U4096;
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Copy, Clone, Hash, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PaillierProduction;
 
 impl PaillierParams for PaillierProduction {
     const PRIME_BITS: usize = 1024;
     type HalfUint = U1024;
+    // TODO(dp): this is a blocker; can't impl Hash for a foreign type
     type HalfUintMod = U1024Mod;
     type Uint = U2048;
     type UintMod = U2048Mod;
@@ -82,7 +84,10 @@ impl PaillierParams for PaillierProduction {
 /// Signing scheme parameters.
 // TODO (#27): this trait can include curve scalar/point types as well,
 // but for now they are hardcoded to `k256`.
-pub trait SchemeParams: Debug + Clone + Send + PartialEq + Eq + Send + Sync + 'static {
+pub trait SchemeParams:
+// TODO(dp): Need `Hash` here?
+    Hash + Debug + Clone + Send + PartialEq + Eq + Send + Sync + 'static
+{
     /// The order of the curve.
     const CURVE_ORDER: NonZero<<Self::Paillier as PaillierParams>::Uint>; // $q$
     /// The order of the curve as a wide integer.
@@ -96,7 +101,7 @@ pub trait SchemeParams: Debug + Clone + Send + PartialEq + Eq + Send + Sync + 's
     /// The error bound for range checks (referred to in the paper as the slackness parameter).
     const EPS_BOUND: usize; // $\eps$, in paper $= 2 \ell$ (see Table 2)
     /// The parameters of the Paillier encryption.
-    type Paillier: PaillierParams;
+    type Paillier: PaillierParams + Hash;
 
     /// Converts a curve scalar to the associated integer type.
     fn uint_from_scalar(value: &Scalar) -> <Self::Paillier as PaillierParams>::Uint {
@@ -107,7 +112,7 @@ pub trait SchemeParams: Debug + Clone + Send + PartialEq + Eq + Send + Sync + 's
         let scalar_len = scalar_bytes.len();
 
         debug_assert!(uint_len >= scalar_len);
-        repr.as_mut()[uint_len - scalar_len..].copy_from_slice(&scalar_bytes);
+        repr.as_mut()[uint_len - scalar_len..].copy_from_slice(&scalar_bytes.as_slice());
         <Self::Paillier as PaillierParams>::Uint::from_be_bytes(repr)
     }
 
@@ -169,7 +174,7 @@ impl<P: SchemeParams> HashableType for P {
 
 /// Scheme parameters **for testing purposes only**.
 /// Security is weakened to allow for faster execution.
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Copy, Clone, Hash, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TestParams;
 
 // Some requirements from range proofs etc:
@@ -193,7 +198,7 @@ impl SchemeParams for TestParams {
 }
 
 /// Production strength parameters.
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Copy, Clone, Hash, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProductionParams;
 
 impl SchemeParams for ProductionParams {

@@ -4,11 +4,12 @@ This way they can be used in a state machine loop without code repetition.
 */
 
 use alloc::boxed::Box;
-use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::format;
 use alloc::string::{String, ToString};
 use core::any::{Any, TypeId};
+use core::hash::Hash;
 
+use hashbrown::{HashMap, HashSet};
 use rand_core::CryptoRngCore;
 use serde::{Deserialize, Serialize};
 
@@ -96,8 +97,8 @@ pub(crate) trait DynRound<I, Res: ProtocolResult>: Send + Sync {
     fn next_round_num(&self) -> Option<u8>;
 
     fn requires_echo(&self) -> bool;
-    fn message_destinations(&self) -> &BTreeSet<I>;
-    fn expecting_messages_from(&self) -> &BTreeSet<I>;
+    fn message_destinations(&self) -> &HashSet<I>;
+    fn expecting_messages_from(&self) -> &HashSet<I>;
     fn make_broadcast_message(
         &self,
         rng: &mut dyn CryptoRngCore,
@@ -116,7 +117,7 @@ pub(crate) trait DynRound<I, Res: ProtocolResult>: Send + Sync {
         direct_data: Option<&[u8]>,
     ) -> Result<DynPayload, ReceiveError<Res>>;
     fn can_finalize(&self, accum: &DynRoundAccum<I>) -> bool;
-    fn missing_messages(&self, accum: &DynRoundAccum<I>) -> BTreeSet<I>;
+    fn missing_messages(&self, accum: &DynRoundAccum<I>) -> HashSet<I>;
 }
 
 fn is_null_type<T: 'static>() -> bool {
@@ -125,7 +126,7 @@ fn is_null_type<T: 'static>() -> bool {
 
 impl<I, R> DynRound<I, R::Result> for R
 where
-    I: Ord + Clone,
+    I: Ord + Clone + Hash,
     R: Round<I> + Send + Sync,
     <R as Round<I>>::BroadcastMessage: 'static,
     <R as Round<I>>::DirectMessage: 'static,
@@ -140,11 +141,11 @@ where
         R::NEXT_ROUND_NUM
     }
 
-    fn message_destinations(&self) -> &BTreeSet<I> {
+    fn message_destinations(&self) -> &HashSet<I> {
         self.message_destinations()
     }
 
-    fn expecting_messages_from(&self) -> &BTreeSet<I> {
+    fn expecting_messages_from(&self) -> &HashSet<I> {
         self.expecting_messages_from()
     }
 
@@ -249,28 +250,35 @@ where
         self.can_finalize(&accum.received)
     }
 
-    fn missing_messages(&self, accum: &DynRoundAccum<I>) -> BTreeSet<I> {
+    fn missing_messages(&self, accum: &DynRoundAccum<I>) -> HashSet<I> {
         self.missing_messages(&accum.received)
     }
 }
 
 pub(crate) struct DynRoundAccum<I> {
-    received: BTreeSet<I>,
-    payloads: BTreeMap<I, DynPayload>,
-    artifacts: BTreeMap<I, DynArtifact>,
+    received: HashSet<I>,
+    payloads: HashMap<I, DynPayload>,
+    artifacts: HashMap<I, DynArtifact>,
 }
 
-struct RoundAccum<I: Ord + Clone, R: Round<I>> {
-    payloads: BTreeMap<I, <R as Round<I>>::Payload>,
-    artifacts: BTreeMap<I, <R as Round<I>>::Artifact>,
+struct RoundAccum<I, R>
+where
+    I: Ord + Clone + Hash,
+    R: Round<I>,
+{
+    payloads: HashMap<I, <R as Round<I>>::Payload>,
+    artifacts: HashMap<I, <R as Round<I>>::Artifact>,
 }
 
-impl<I: Ord + Clone> DynRoundAccum<I> {
+impl<I> DynRoundAccum<I>
+where
+    I: Ord + Clone + Hash,
+{
     pub fn new() -> Self {
         Self {
-            received: BTreeSet::new(),
-            payloads: BTreeMap::new(),
-            artifacts: BTreeMap::new(),
+            received: HashSet::new(),
+            payloads: HashMap::new(),
+            artifacts: HashMap::new(),
         }
     }
 
@@ -308,12 +316,12 @@ impl<I: Ord + Clone> DynRoundAccum<I> {
             .payloads
             .into_iter()
             .map(|(id, elem)| downcast::<<R as Round<I>>::Payload>(elem.0).map(|elem| (id, elem)))
-            .collect::<Result<BTreeMap<_, _>, _>>()?;
+            .collect::<Result<HashMap<_, _>, _>>()?;
         let artifacts = self
             .artifacts
             .into_iter()
             .map(|(id, elem)| downcast::<<R as Round<I>>::Artifact>(elem.0).map(|elem| (id, elem)))
-            .collect::<Result<BTreeMap<_, _>, _>>()?;
+            .collect::<Result<HashMap<_, _>, _>>()?;
         Ok(RoundAccum {
             payloads,
             artifacts,
@@ -357,7 +365,7 @@ const _: () = {
 
     impl<I, R> DynFinalizable<I, R::Result> for R
     where
-        I: Ord + Clone,
+        I: Hash + Ord + Clone,
         R: Round<I> + Send + Sync + 'static,
         <R as Round<I>>::BroadcastMessage: 'static,
         <R as Round<I>>::DirectMessage: 'static,
@@ -378,7 +386,7 @@ const _: () = {
 
     impl<I, R> _DynFinalizable<I, R::Result, ToResult> for R
     where
-        I: Ord + Clone,
+        I: Hash + Ord + Clone,
         <R as Round<I>>::Payload: Send + 'static,
         <R as Round<I>>::Artifact: Send + 'static,
         R: 'static + FinalizableToResult<I>,
@@ -399,7 +407,7 @@ const _: () = {
 
     impl<I, R> _DynFinalizable<I, R::Result, ToNextRound> for R
     where
-        I: Ord + Clone,
+        I: Hash + Ord + Clone,
         <R as Round<I>>::Payload: Send + 'static,
         <R as Round<I>>::Artifact: Send + 'static,
         R: 'static + FinalizableToNextRound<I>,

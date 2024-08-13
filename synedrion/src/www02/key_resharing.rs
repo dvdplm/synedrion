@@ -6,11 +6,12 @@
 //! (Specifically, REDIST protocol).
 
 use alloc::boxed::Box;
-use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::vec::Vec;
 use core::fmt::Debug;
+use core::hash::Hash;
 use core::marker::PhantomData;
 
+use hashbrown::{HashMap, HashSet};
 use k256::ecdsa::VerifyingKey;
 use rand_core::CryptoRngCore;
 use secrecy::{ExposeSecret, SecretBox};
@@ -32,7 +33,11 @@ use crate::SchemeParams;
 #[derive(Debug)]
 pub struct KeyResharingResult<P: SchemeParams, I: Debug>(PhantomData<P>, PhantomData<I>);
 
-impl<P: SchemeParams, I: Ord + Debug> ProtocolResult for KeyResharingResult<P, I> {
+impl<P, I> ProtocolResult for KeyResharingResult<P, I>
+where
+    P: SchemeParams,
+    I: Ord + Debug + Hash,
+{
     type Success = Option<ThresholdKeyShare<P, I>>;
     type ProvableError = KeyResharingError;
     type CorrectnessProof = ();
@@ -46,7 +51,11 @@ pub enum KeyResharingError {
 
 /// Old share data.
 #[derive(Clone)]
-pub struct OldHolder<P: SchemeParams, I: Ord> {
+pub struct OldHolder<P, I>
+where
+    P: SchemeParams,
+    I: Ord + Hash,
+{
     /// The threshold key share.
     pub key_share: ThresholdKeyShare<P, I>,
 }
@@ -59,18 +68,22 @@ pub struct NewHolder<I: Ord> {
     /// The old threshold.
     pub old_threshold: usize,
     /// Some of the holders of the old shares (at least `old_threshold` of them).
-    pub old_holders: BTreeSet<I>,
+    pub old_holders: HashSet<I>,
 }
 
 /// Inputs for the Key Resharing protocol.
 #[derive(Clone)]
-pub struct KeyResharingInputs<P: SchemeParams, I: Ord> {
+pub struct KeyResharingInputs<P, I>
+where
+    P: SchemeParams,
+    I: Ord + Hash,
+{
     /// Old share data if the node holds it, or `None`.
     pub old_holder: Option<OldHolder<P, I>>,
     /// New share data if the node is one of the new holders, or `None`.
     pub new_holder: Option<NewHolder<I>>,
     /// The new holders of the shares.
-    pub new_holders: BTreeSet<I>,
+    pub new_holders: HashSet<I>,
     /// The new threshold.
     pub new_threshold: usize,
 }
@@ -88,20 +101,24 @@ struct NewHolderData<I: Ord> {
 pub struct Round1<P: SchemeParams, I: Ord> {
     old_holder: Option<OldHolderData>,
     new_holder: Option<NewHolderData<I>>,
-    new_share_ids: BTreeMap<I, ShareId>,
+    new_share_ids: HashMap<I, ShareId>,
     new_threshold: usize,
-    other_ids: BTreeSet<I>,
+    other_ids: HashSet<I>,
     my_id: I,
-    message_destinations: BTreeSet<I>,
+    message_destinations: HashSet<I>,
     phantom: PhantomData<P>,
 }
 
-impl<P: SchemeParams, I: Clone + Ord + Debug> FirstRound<I> for Round1<P, I> {
+impl<P, I> FirstRound<I> for Round1<P, I>
+where
+    P: SchemeParams,
+    I: Clone + Ord + Debug + Hash,
+{
     type Inputs = KeyResharingInputs<P, I>;
     fn new(
         rng: &mut impl CryptoRngCore,
         _shared_randomness: &[u8],
-        other_ids: BTreeSet<I>,
+        other_ids: HashSet<I>,
         my_id: I,
         inputs: Self::Inputs,
     ) -> Result<Self, InitError> {
@@ -126,7 +143,7 @@ impl<P: SchemeParams, I: Clone + Ord + Debug> FirstRound<I> for Round1<P, I> {
             new_holders_except_me.remove(&my_id);
             new_holders_except_me
         } else {
-            BTreeSet::new()
+            HashSet::new()
         };
 
         let old_holder = inputs.old_holder.map(|old_holder| {
@@ -178,13 +195,17 @@ pub struct Round1Payload {
     old_share_id: ShareId,
 }
 
-impl<P: SchemeParams, I: Clone + Ord + Debug> Round<I> for Round1<P, I> {
+impl<P, I> Round<I> for Round1<P, I>
+where
+    P: SchemeParams,
+    I: Clone + Ord + Debug + Hash,
+{
     type Type = ToResult;
     type Result = KeyResharingResult<P, I>;
     const ROUND_NUM: u8 = 1;
     const NEXT_ROUND_NUM: Option<u8> = None;
 
-    fn other_ids(&self) -> &BTreeSet<I> {
+    fn other_ids(&self) -> &HashSet<I> {
         &self.other_ids
     }
 
@@ -198,7 +219,7 @@ impl<P: SchemeParams, I: Clone + Ord + Debug> Round<I> for Round1<P, I> {
     type Payload = Round1Payload;
     type Artifact = ();
 
-    fn message_destinations(&self) -> &BTreeSet<I> {
+    fn message_destinations(&self) -> &HashSet<I> {
         &self.message_destinations
     }
 
@@ -264,7 +285,7 @@ impl<P: SchemeParams, I: Clone + Ord + Debug> Round<I> for Round1<P, I> {
         FinalizationRequirement::Custom
     }
 
-    fn can_finalize(&self, received: &BTreeSet<I>) -> bool {
+    fn can_finalize(&self, received: &HashSet<I>) -> bool {
         if let Some(new_holder) = self.new_holder.as_ref() {
             let threshold = if self.old_holder.is_some() && self.new_holder.is_some() {
                 new_holder.inputs.old_threshold - 1
@@ -277,27 +298,31 @@ impl<P: SchemeParams, I: Clone + Ord + Debug> Round<I> for Round1<P, I> {
         }
     }
 
-    fn missing_messages(&self, received: &BTreeSet<I>) -> BTreeSet<I> {
+    fn missing_messages(&self, received: &HashSet<I>) -> HashSet<I> {
         if let Some(new_holder) = self.new_holder.as_ref() {
             new_holder
                 .inputs
                 .old_holders
                 .iter()
-                .filter(|id| !received.contains(id) && id != &self.my_id())
+                .filter(|id| !received.contains(*id) && id != &self.my_id())
                 .cloned()
                 .collect()
         } else {
-            BTreeSet::new()
+            HashSet::new()
         }
     }
 }
 
-impl<P: SchemeParams, I: Ord + Clone + Debug> FinalizableToResult<I> for Round1<P, I> {
+impl<P, I> FinalizableToResult<I> for Round1<P, I>
+where
+    P: SchemeParams,
+    I: Ord + Clone + Debug + Hash,
+{
     fn finalize_to_result(
         self,
         _rng: &mut impl CryptoRngCore,
-        payloads: BTreeMap<I, <Self as Round<I>>::Payload>,
-        _artifacts: BTreeMap<I, <Self as Round<I>>::Artifact>,
+        payloads: HashMap<I, <Self as Round<I>>::Payload>,
+        _artifacts: HashMap<I, <Self as Round<I>>::Artifact>,
     ) -> Result<<Self::Result as ProtocolResult>::Success, FinalizeError<Self::Result>> {
         // If this party is not a new holder, exit.
         let new_holder = match self.new_holder.as_ref() {
@@ -349,7 +374,7 @@ impl<P: SchemeParams, I: Ord + Clone + Debug> FinalizableToResult<I> for Round1<
             .old_holders
             .iter()
             .map(|id| (payloads[id].old_share_id, payloads[id].subshare))
-            .collect::<BTreeMap<_, _>>();
+            .collect::<HashMap<_, _>>();
         let secret_share = SecretBox::new(Box::new(shamir_join_scalars(subshares.iter())));
 
         // Generate the public shares of all the new holders.
@@ -361,7 +386,7 @@ impl<P: SchemeParams, I: Ord + Clone + Debug> FinalizableToResult<I> for Round1<
                 let public_subshares = payloads
                     .values()
                     .map(|p| (p.old_share_id, p.public_polynomial.evaluate(&share_id)))
-                    .collect::<BTreeMap<_, _>>();
+                    .collect::<HashMap<_, _>>();
                 let public_share = shamir_join_points(public_subshares.iter());
                 (id.clone(), public_share)
             })
@@ -380,7 +405,7 @@ impl<P: SchemeParams, I: Ord + Clone + Debug> FinalizableToResult<I> for Round1<
 
 #[cfg(test)]
 mod tests {
-    use alloc::collections::{BTreeMap, BTreeSet};
+    use hashbrown::{HashMap, HashSet};
 
     use rand_core::{OsRng, RngCore};
     use secrecy::ExposeSecret;
@@ -400,8 +425,8 @@ mod tests {
 
         let ids = [Id(0), Id(1), Id(2), Id(3)];
 
-        let old_holders = BTreeSet::from([ids[0], ids[1], ids[2]]);
-        let new_holders = BTreeSet::from([ids[1], ids[2], ids[3]]);
+        let old_holders = HashSet::from([ids[0], ids[1], ids[2]]);
+        let new_holders = HashSet::from([ids[1], ids[2], ids[3]]);
 
         let old_key_shares =
             ThresholdKeyShare::<TestParams, Id>::new_centralized(&mut OsRng, &old_holders, 2, None);
@@ -410,7 +435,7 @@ mod tests {
         let party0 = Round1::new(
             &mut OsRng,
             &shared_randomness,
-            BTreeSet::from([ids[1], ids[2], ids[3]]),
+            HashSet::from([ids[1], ids[2], ids[3]]),
             ids[0],
             KeyResharingInputs {
                 old_holder: Some(OldHolder {
@@ -426,7 +451,7 @@ mod tests {
         let party1 = Round1::new(
             &mut OsRng,
             &shared_randomness,
-            BTreeSet::from([ids[0], ids[2], ids[3]]),
+            HashSet::from([ids[0], ids[2], ids[3]]),
             ids[1],
             KeyResharingInputs {
                 old_holder: Some(OldHolder {
@@ -446,7 +471,7 @@ mod tests {
         let party2 = Round1::new(
             &mut OsRng,
             &shared_randomness,
-            BTreeSet::from([ids[0], ids[1], ids[3]]),
+            HashSet::from([ids[0], ids[1], ids[3]]),
             ids[2],
             KeyResharingInputs {
                 old_holder: Some(OldHolder {
@@ -466,7 +491,7 @@ mod tests {
         let party3 = Round1::new(
             &mut OsRng,
             &shared_randomness,
-            BTreeSet::from([ids[0], ids[1], ids[2]]),
+            HashSet::from([ids[0], ids[1], ids[2]]),
             ids[3],
             KeyResharingInputs {
                 old_holder: None,
@@ -481,7 +506,7 @@ mod tests {
         )
         .unwrap();
 
-        let r1 = BTreeMap::from([
+        let r1 = HashMap::from([
             (ids[0], party0),
             (ids[1], party1),
             (ids[2], party2),
@@ -499,13 +524,13 @@ mod tests {
             .into_iter()
             .filter(|(id, _share)| id != &ids[0])
             .map(|(id, share)| (id, share.unwrap()))
-            .collect::<BTreeMap<_, _>>();
+            .collect::<HashMap<_, _>>();
 
         // Check that all public information is the same between the shares
         let public_sets = shares
             .iter()
             .map(|(id, share)| (*id, share.public_shares.clone()))
-            .collect::<BTreeMap<_, _>>();
+            .collect::<HashMap<_, _>>();
         assert!(public_sets.values().all(|pk| pk == &public_sets[&ids[1]]));
 
         // Check that the public keys correspond to the secret key shares

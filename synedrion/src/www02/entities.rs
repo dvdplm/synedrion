@@ -1,10 +1,11 @@
 use alloc::boxed::Box;
-use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::vec::Vec;
 use core::fmt::Debug;
+use core::hash::Hash;
 use core::marker::PhantomData;
 
 use bip32::{DerivationPath, PrivateKey, PrivateKeyBytes, PublicKey};
+use hashbrown::{HashMap, HashSet};
 use k256::ecdsa::{SigningKey, VerifyingKey};
 use rand_core::CryptoRngCore;
 use secrecy::{ExposeSecret, SecretBox};
@@ -19,18 +20,26 @@ use crate::tools::sss::{
 
 /// A threshold variant of the key share, where any `threshold` shares our of the total number
 /// is enough to perform signing.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ThresholdKeyShare<P: SchemeParams, I: Ord> {
+#[derive(Debug, Clone, Hash, Serialize, Deserialize)]
+pub struct ThresholdKeyShare<P, I>
+where
+    P: SchemeParams,
+    I: Ord + Hash,
+{
     pub(crate) owner: I,
     pub(crate) threshold: u32,
     pub(crate) secret_share: SecretBox<Scalar>,
-    pub(crate) share_ids: BTreeMap<I, ShareId>,
-    pub(crate) public_shares: BTreeMap<I, Point>,
+    pub(crate) share_ids: HashMap<I, ShareId>,
+    pub(crate) public_shares: HashMap<I, Point>,
     // TODO (#27): this won't be needed when Scalar/Point are a part of `P`
     pub(crate) phantom: PhantomData<P>,
 }
 
-impl<P: SchemeParams, I: Clone + Ord + PartialEq + Debug> ThresholdKeyShare<P, I> {
+impl<P, I> ThresholdKeyShare<P, I>
+where
+    P: SchemeParams,
+    I: Clone + Ord + PartialEq + Debug + Hash,
+{
     /// Threshold share ID.
     pub fn share_id(&self) -> ShareId {
         self.share_ids[&self.owner]
@@ -44,10 +53,10 @@ impl<P: SchemeParams, I: Clone + Ord + PartialEq + Debug> ThresholdKeyShare<P, I
     /// Creates a set of threshold key shares for the given IDs.
     pub fn new_centralized(
         rng: &mut impl CryptoRngCore,
-        ids: &BTreeSet<I>,
+        ids: &HashSet<I>,
         threshold: usize,
         signing_key: Option<&SigningKey>,
-    ) -> BTreeMap<I, Self> {
+    ) -> HashMap<I, Self> {
         debug_assert!(threshold <= ids.len()); // TODO (#68): make the method fallible
 
         let secret = match signing_key {
@@ -61,12 +70,12 @@ impl<P: SchemeParams, I: Clone + Ord + PartialEq + Debug> ThresholdKeyShare<P, I
             .iter()
             .cloned()
             .zip(share_ids)
-            .collect::<BTreeMap<_, _>>();
+            .collect::<HashMap<_, _>>();
 
         let public_shares = share_ids
             .iter()
             .map(|(id, share_id)| (id.clone(), secret_shares[share_id].mul_by_generator()))
-            .collect::<BTreeMap<_, _>>();
+            .collect::<HashMap<_, _>>();
 
         ids.iter()
             .map(|id| {
@@ -104,7 +113,7 @@ impl<P: SchemeParams, I: Clone + Ord + PartialEq + Debug> ThresholdKeyShare<P, I
     /// Converts a t-of-n key share into a t-of-t key share
     /// (for the `t` share indices supplied as `share_ids`)
     /// that can be used in the presigning/signing protocols.
-    pub fn to_key_share(&self, ids: &BTreeSet<I>) -> KeyShare<P, I> {
+    pub fn to_key_share(&self, ids: &HashSet<I>) -> KeyShare<P, I> {
         debug_assert!(ids.len() == self.threshold as usize);
         debug_assert!(ids.iter().any(|id| id == &self.owner));
 
@@ -112,7 +121,7 @@ impl<P: SchemeParams, I: Clone + Ord + PartialEq + Debug> ThresholdKeyShare<P, I
         let share_ids = ids
             .iter()
             .map(|id| (id.clone(), self.share_ids[id]))
-            .collect::<BTreeMap<_, _>>();
+            .collect::<HashMap<_, _>>();
 
         let secret_share = SecretBox::new(Box::new(
             self.secret_share.expose_secret() * &interpolation_coeff(share_ids.values(), &share_id),
@@ -143,7 +152,7 @@ impl<P: SchemeParams, I: Clone + Ord + PartialEq + Debug> ThresholdKeyShare<P, I
             .iter()
             .cloned()
             .zip((1..=ids.len()).map(ShareId::new))
-            .collect::<BTreeMap<_, _>>();
+            .collect::<HashMap<_, _>>();
 
         let secret_share = SecretBox::new(Box::new(
             key_share.secret_share.expose_secret()
@@ -218,8 +227,10 @@ pub trait DeriveChildKey {
     ) -> Result<VerifyingKey, bip32::Error>;
 }
 
-impl<P: SchemeParams, I: Clone + Ord + PartialEq + Debug> DeriveChildKey
-    for ThresholdKeyShare<P, I>
+impl<P, I> DeriveChildKey for ThresholdKeyShare<P, I>
+where
+    P: SchemeParams,
+    I: Clone + Ord + PartialEq + Debug + Hash,
 {
     fn derive_verifying_key_bip32(
         &self,
@@ -288,8 +299,7 @@ fn apply_tweaks_private(
 
 #[cfg(test)]
 mod tests {
-    use alloc::collections::BTreeSet;
-
+    use hashbrown::HashSet;
     use k256::ecdsa::SigningKey;
     use rand_core::OsRng;
     use secrecy::ExposeSecret;
@@ -303,7 +313,7 @@ mod tests {
     fn threshold_key_share_centralized() {
         let sk = SigningKey::random(&mut OsRng);
 
-        let ids = BTreeSet::from([Id(0), Id(1), Id(2)]);
+        let ids = HashSet::from([Id(0), Id(1), Id(2)]);
 
         let shares =
             ThresholdKeyShare::<TestParams, Id>::new_centralized(&mut OsRng, &ids, 2, Some(&sk));
@@ -314,7 +324,7 @@ mod tests {
 
         assert_eq!(&shares[&Id(0)].verifying_key(), sk.verifying_key());
 
-        let ids_subset = BTreeSet::from([Id(2), Id(0)]);
+        let ids_subset = HashSet::from([Id(2), Id(0)]);
         let nt_share0 = shares[&Id(0)].to_key_share(&ids_subset);
         let nt_share1 = shares[&Id(2)].to_key_share(&ids_subset);
 

@@ -1,12 +1,13 @@
 //! Presigning protocol, in the paper ECDSA Pre-Signing (Fig. 7).
 
 use alloc::boxed::Box;
-use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::fmt::Debug;
+use core::hash::Hash;
 use core::marker::PhantomData;
 
+use hashbrown::{HashMap, HashSet};
 use rand_core::CryptoRngCore;
 use secrecy::{ExposeSecret, SecretBox};
 use serde::{Deserialize, Serialize};
@@ -46,10 +47,10 @@ pub enum PresigningError {
     Round3(String),
 }
 
-struct Context<P: SchemeParams, I: Ord> {
+struct Context<P: SchemeParams, I: Ord + Hash> {
     ssid_hash: HashOutput,
     my_id: I,
-    other_ids: BTreeSet<I>,
+    other_ids: HashSet<I>,
     key_share: KeyShare<P, I>,
     aux_info: AuxInfoPrecomputed<P, I>,
     k: Scalar,
@@ -58,18 +59,22 @@ struct Context<P: SchemeParams, I: Ord> {
     nu: RandomizerMod<P::Paillier>,
 }
 
-pub struct Round1<P: SchemeParams, I: Ord> {
+pub struct Round1<P: SchemeParams, I: Ord + Hash> {
     context: Context<P, I>,
     cap_k: CiphertextMod<P::Paillier>,
     cap_g: CiphertextMod<P::Paillier>,
 }
 
-impl<P: SchemeParams, I: Debug + Clone + Ord + Serialize> FirstRound<I> for Round1<P, I> {
+impl<P, I> FirstRound<I> for Round1<P, I>
+where
+    P: SchemeParams,
+    I: Debug + Clone + Ord + Serialize + Hash,
+{
     type Inputs = (KeyShare<P, I>, AuxInfo<P, I>);
     fn new(
         rng: &mut impl CryptoRngCore,
         shared_randomness: &[u8],
-        other_ids: BTreeSet<I>,
+        other_ids: HashSet<I>,
         my_id: I,
         inputs: Self::Inputs,
     ) -> Result<Self, InitError> {
@@ -142,13 +147,17 @@ pub struct Round1Payload<P: SchemeParams> {
     cap_g: Ciphertext<P::Paillier>,
 }
 
-impl<P: SchemeParams, I: Debug + Clone + Ord + Serialize> Round<I> for Round1<P, I> {
+impl<P, I> Round<I> for Round1<P, I>
+where
+    P: SchemeParams,
+    I: Debug + Clone + Ord + Serialize + Hash,
+{
     type Type = ToNextRound;
     type Result = PresigningResult<P, I>;
     const ROUND_NUM: u8 = 1;
     const NEXT_ROUND_NUM: Option<u8> = Some(2);
 
-    fn other_ids(&self) -> &BTreeSet<I> {
+    fn other_ids(&self) -> &HashSet<I> {
         &self.context.other_ids
     }
 
@@ -220,17 +229,19 @@ impl<P: SchemeParams, I: Debug + Clone + Ord + Serialize> Round<I> for Round1<P,
     }
 }
 
-impl<P: SchemeParams, I: Debug + Clone + Ord + Serialize> FinalizableToNextRound<I>
-    for Round1<P, I>
+impl<P, I> FinalizableToNextRound<I> for Round1<P, I>
+where
+    P: SchemeParams,
+    I: Debug + Clone + Ord + Serialize + Hash,
 {
     type NextRound = Round2<P, I>;
     fn finalize_to_next_round(
         self,
         _rng: &mut impl CryptoRngCore,
-        payloads: BTreeMap<I, <Self as Round<I>>::Payload>,
-        _artifacts: BTreeMap<I, <Self as Round<I>>::Artifact>,
+        payloads: HashMap<I, <Self as Round<I>>::Payload>,
+        _artifacts: HashMap<I, <Self as Round<I>>::Artifact>,
     ) -> Result<Self::NextRound, FinalizeError<Self::Result>> {
-        let (others_cap_k, others_cap_g): (BTreeMap<_, _>, BTreeMap<_, _>) = payloads
+        let (others_cap_k, others_cap_g): (HashMap<_, _>, HashMap<_, _>) = payloads
             .into_iter()
             .map(|(id, payload)| ((id.clone(), payload.cap_k), (id, payload.cap_g)))
             .unzip();
@@ -244,7 +255,7 @@ impl<P: SchemeParams, I: Debug + Clone + Ord + Serialize> FinalizableToNextRound
                     ciphertext.to_mod(&self.context.aux_info.public_aux[&id].paillier_pk);
                 (id, ciphertext_mod)
             })
-            .collect::<BTreeMap<_, _>>();
+            .collect::<HashMap<_, _>>();
         all_cap_k.insert(my_id.clone(), self.cap_k);
 
         let mut all_cap_g = others_cap_g
@@ -254,7 +265,7 @@ impl<P: SchemeParams, I: Debug + Clone + Ord + Serialize> FinalizableToNextRound
                     ciphertext.to_mod(&self.context.aux_info.public_aux[&id].paillier_pk);
                 (id, ciphertext_mod)
             })
-            .collect::<BTreeMap<_, _>>();
+            .collect::<HashMap<_, _>>();
         all_cap_g.insert(my_id, self.cap_g);
 
         Ok(Round2 {
@@ -265,10 +276,14 @@ impl<P: SchemeParams, I: Debug + Clone + Ord + Serialize> FinalizableToNextRound
     }
 }
 
-pub struct Round2<P: SchemeParams, I: Ord> {
+pub struct Round2<P, I>
+where
+    P: SchemeParams,
+    I: Ord + Hash,
+{
     context: Context<P, I>,
-    all_cap_k: BTreeMap<I, CiphertextMod<P::Paillier>>,
-    all_cap_g: BTreeMap<I, CiphertextMod<P::Paillier>>,
+    all_cap_k: HashMap<I, CiphertextMod<P::Paillier>>,
+    all_cap_g: HashMap<I, CiphertextMod<P::Paillier>>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -315,13 +330,17 @@ pub struct Round2Payload<P: SchemeParams> {
     hat_cap_d: CiphertextMod<P::Paillier>,
 }
 
-impl<P: SchemeParams, I: Debug + Clone + Ord + Serialize> Round<I> for Round2<P, I> {
+impl<P, I> Round<I> for Round2<P, I>
+where
+    P: SchemeParams,
+    I: Debug + Clone + Ord + Serialize + Hash,
+{
     type Type = ToNextRound;
     type Result = PresigningResult<P, I>;
     const ROUND_NUM: u8 = 2;
     const NEXT_ROUND_NUM: Option<u8> = Some(3);
 
-    fn other_ids(&self) -> &BTreeSet<I> {
+    fn other_ids(&self) -> &HashSet<I> {
         &self.context.other_ids
     }
 
@@ -523,15 +542,17 @@ impl<P: SchemeParams, I: Debug + Clone + Ord + Serialize> Round<I> for Round2<P,
     }
 }
 
-impl<P: SchemeParams, I: Debug + Clone + Ord + Serialize> FinalizableToNextRound<I>
-    for Round2<P, I>
+impl<P, I> FinalizableToNextRound<I> for Round2<P, I>
+where
+    P: SchemeParams,
+    I: Debug + Clone + Ord + Serialize + Hash,
 {
     type NextRound = Round3<P, I>;
     fn finalize_to_next_round(
         self,
         _rng: &mut impl CryptoRngCore,
-        payloads: BTreeMap<I, <Self as Round<I>>::Payload>,
-        artifacts: BTreeMap<I, <Self as Round<I>>::Artifact>,
+        payloads: HashMap<I, <Self as Round<I>>::Payload>,
+        artifacts: HashMap<I, <Self as Round<I>>::Artifact>,
     ) -> Result<Self::NextRound, FinalizeError<Self::Result>> {
         let cap_gamma = payloads
             .values()
@@ -575,17 +596,21 @@ impl<P: SchemeParams, I: Debug + Clone + Ord + Serialize> FinalizableToNextRound
     }
 }
 
-pub struct Round3<P: SchemeParams, I: Ord> {
+pub struct Round3<P, I>
+where
+    P: SchemeParams,
+    I: Ord + Hash,
+{
     context: Context<P, I>,
     delta: Signed<<P::Paillier as PaillierParams>::Uint>,
     chi: Signed<<P::Paillier as PaillierParams>::Uint>,
     cap_delta: Point,
     cap_gamma: Point,
-    all_cap_k: BTreeMap<I, CiphertextMod<P::Paillier>>,
-    all_cap_g: BTreeMap<I, CiphertextMod<P::Paillier>>,
-    cap_ds: BTreeMap<I, CiphertextMod<P::Paillier>>,
-    hat_cap_ds: BTreeMap<I, CiphertextMod<P::Paillier>>,
-    round2_artifacts: BTreeMap<I, Round2Artifact<P>>,
+    all_cap_k: HashMap<I, CiphertextMod<P::Paillier>>,
+    all_cap_g: HashMap<I, CiphertextMod<P::Paillier>>,
+    cap_ds: HashMap<I, CiphertextMod<P::Paillier>>,
+    hat_cap_ds: HashMap<I, CiphertextMod<P::Paillier>>,
+    round2_artifacts: HashMap<I, Round2Artifact<P>>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -602,13 +627,17 @@ pub struct Round3Payload {
     cap_delta: Point,
 }
 
-impl<P: SchemeParams, I: Debug + Clone + Ord + Serialize> Round<I> for Round3<P, I> {
+impl<P, I> Round<I> for Round3<P, I>
+where
+    P: SchemeParams,
+    I: Debug + Clone + Ord + Serialize + Hash,
+{
     type Type = ToResult;
     type Result = PresigningResult<P, I>;
     const ROUND_NUM: u8 = 3;
     const NEXT_ROUND_NUM: Option<u8> = None;
 
-    fn other_ids(&self) -> &BTreeSet<I> {
+    fn other_ids(&self) -> &HashSet<I> {
         &self.context.other_ids
     }
 
@@ -695,14 +724,18 @@ pub struct PresigningProof<P: SchemeParams, I> {
     dec_proofs: Vec<(I, DecProof<P>)>,
 }
 
-impl<P: SchemeParams, I: Debug + Clone + Ord + Serialize> FinalizableToResult<I> for Round3<P, I> {
+impl<P, I> FinalizableToResult<I> for Round3<P, I>
+where
+    P: SchemeParams,
+    I: Debug + Clone + Ord + Serialize + Hash,
+{
     fn finalize_to_result(
         self,
         rng: &mut impl CryptoRngCore,
-        payloads: BTreeMap<I, <Self as Round<I>>::Payload>,
-        _artifacts: BTreeMap<I, <Self as Round<I>>::Artifact>,
+        payloads: HashMap<I, <Self as Round<I>>::Payload>,
+        _artifacts: HashMap<I, <Self as Round<I>>::Artifact>,
     ) -> Result<<Self::Result as ProtocolResult>::Success, FinalizeError<Self::Result>> {
-        let (deltas, cap_deltas): (BTreeMap<_, _>, BTreeMap<_, _>) = payloads
+        let (deltas, cap_deltas): (HashMap<_, _>, HashMap<_, _>) = payloads
             .into_iter()
             .map(|(id, payload)| ((id.clone(), payload.delta), (id, payload.cap_delta)))
             .unzip();
@@ -866,8 +899,7 @@ impl<P: SchemeParams, I: Debug + Clone + Ord + Serialize> FinalizableToResult<I>
 
 #[cfg(test)]
 mod tests {
-    use alloc::collections::BTreeSet;
-
+    use hashbrown::HashSet;
     use rand_core::{OsRng, RngCore};
     use secrecy::ExposeSecret;
 
@@ -884,7 +916,7 @@ mod tests {
         let mut shared_randomness = [0u8; 32];
         OsRng.fill_bytes(&mut shared_randomness);
 
-        let ids = BTreeSet::from([Id(0), Id(1), Id(2)]);
+        let ids = HashSet::from([Id(0), Id(1), Id(2)]);
 
         let key_shares = KeyShare::new_centralized(&mut OsRng, &ids, None);
         let aux_infos = AuxInfo::new_centralized(&mut OsRng, &ids);

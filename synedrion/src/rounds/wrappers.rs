@@ -1,5 +1,6 @@
-use alloc::collections::BTreeSet;
+use core::hash::Hash;
 
+use hashbrown::HashSet;
 use rand_core::CryptoRngCore;
 
 use super::generic::{
@@ -23,7 +24,10 @@ pub(crate) fn wrap_finalize_error<T: ProtocolResult, Res: CorrectnessProofWrappe
     }
 }
 
-pub(crate) trait RoundWrapper<I: Ord + Clone> {
+pub(crate) trait RoundWrapper<I>
+where
+    I: Ord + Clone + Hash,
+{
     type Result: ProtocolResult + ProvableErrorWrapper<<Self::InnerRound as Round<I>>::Result>;
     type Type: FinalizableType;
     type InnerRound: Round<I>;
@@ -34,13 +38,17 @@ pub(crate) trait RoundWrapper<I: Ord + Clone> {
 
 pub(crate) trait WrappedRound {}
 
-impl<I: Ord + Clone, T: RoundWrapper<I> + WrappedRound> Round<I> for T {
+impl<I, T> Round<I> for T
+where
+    I: Ord + Clone + Hash,
+    T: RoundWrapper<I> + WrappedRound,
+{
     type Type = T::Type;
     type Result = T::Result;
     const ROUND_NUM: u8 = T::ROUND_NUM;
     const NEXT_ROUND_NUM: Option<u8> = T::NEXT_ROUND_NUM;
 
-    fn other_ids(&self) -> &BTreeSet<I> {
+    fn other_ids(&self) -> &HashSet<I> {
         self.inner_round().other_ids()
     }
 
@@ -54,7 +62,7 @@ impl<I: Ord + Clone, T: RoundWrapper<I> + WrappedRound> Round<I> for T {
     type Payload = <T::InnerRound as Round<I>>::Payload;
     type Artifact = <T::InnerRound as Round<I>>::Artifact;
 
-    fn message_destinations(&self) -> &BTreeSet<I> {
+    fn message_destinations(&self) -> &HashSet<I> {
         self.inner_round().message_destinations()
     }
 

@@ -108,7 +108,7 @@ impl<P: PaillierParams> RPParamsMod<P> {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Hash, Serialize, Deserialize)]
 pub(crate) struct RPParams<P: PaillierParams> {
     /// The ring-Pedersen base.
     pub(crate) base: P::Uint, // $t$

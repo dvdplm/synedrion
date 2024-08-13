@@ -11,7 +11,7 @@ use crate::uint::{
     RandomPrimeWithRng, Retrieve, Signed, UintLike, UintModLike,
 };
 
-#[derive(Clone, Serialize, Deserialize, ZeroizeOnDrop)]
+#[derive(Clone, Serialize, Deserialize, Hash, ZeroizeOnDrop)]
 pub(crate) struct SecretKeyPaillier<P: PaillierParams> {
     p: P::HalfUint,
     q: P::HalfUint,
@@ -262,7 +262,7 @@ impl<P: PaillierParams> SecretKeyPaillierPrecomputed<P> {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct PublicKeyPaillier<P: PaillierParams> {
     modulus: P::Uint, // TODO (#104): wrap it in `crypto_bigint::Odd`
 }

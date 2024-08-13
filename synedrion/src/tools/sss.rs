@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::curve::{Point, Scalar};
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, Hash, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 pub struct ShareId(Scalar);
 
 impl ShareId {

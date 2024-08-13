@@ -1,9 +1,10 @@
 use alloc::boxed::Box;
-use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::vec::Vec;
 use core::fmt::Debug;
+use core::hash::Hash;
 use core::marker::PhantomData;
 
+use hashbrown::{HashMap, HashSet};
 use k256::ecdsa::VerifyingKey;
 use rand_core::CryptoRngCore;
 use secrecy::{ExposeSecret, SecretBox};
@@ -21,25 +22,32 @@ use crate::uint::Signed;
 use crate::paillier::RandomizerMod;
 
 /// The result of the KeyInit protocol.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct KeyShare<P, I: Ord> {
+#[derive(Debug, Clone, Hash, Serialize, Deserialize)]
+pub struct KeyShare<P, I>
+where
+    I: Ord + Hash,
+{
     pub(crate) owner: I,
     /// Secret key share of this node.
     pub(crate) secret_share: SecretBox<Scalar>, // `x_i`
-    pub(crate) public_shares: BTreeMap<I, Point>, // `X_j`
+    pub(crate) public_shares: HashMap<I, Point>, // `X_j`
     // TODO (#27): this won't be needed when Scalar/Point are a part of `P`
     pub(crate) phantom: PhantomData<P>,
 }
 
 /// The result of the AuxGen protocol.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AuxInfo<P: SchemeParams, I: Ord> {
+#[derive(Debug, Clone, Hash, Serialize, Deserialize)]
+pub struct AuxInfo<P, I>
+where
+    P: SchemeParams,
+    I: Ord + Hash,
+{
     pub(crate) owner: I,
     pub(crate) secret_aux: SecretAuxInfo<P>,
-    pub(crate) public_aux: BTreeMap<I, PublicAuxInfo<P>>,
+    pub(crate) public_aux: HashMap<I, PublicAuxInfo<P>>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Hash, Serialize, Deserialize)]
 #[serde(bound(serialize = "SecretKeyPaillier<P::Paillier>: Serialize"))]
 #[serde(bound(deserialize = "SecretKeyPaillier<P::Paillier>: for <'x> Deserialize<'x>"))]
 pub(crate) struct SecretAuxInfo<P: SchemeParams> {
@@ -47,7 +55,7 @@ pub(crate) struct SecretAuxInfo<P: SchemeParams> {
     pub(crate) el_gamal_sk: SecretBox<Scalar>, // `y_i`
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Hash, Serialize, Deserialize)]
 #[serde(bound(serialize = "PublicKeyPaillier<P::Paillier>: Serialize"))]
 #[serde(bound(deserialize = "PublicKeyPaillier<P::Paillier>: for <'x> Deserialize<'x>"))]
 pub(crate) struct PublicAuxInfo<P: SchemeParams> {
@@ -61,7 +69,7 @@ pub(crate) struct PublicAuxInfo<P: SchemeParams> {
 #[derive(Clone)]
 pub(crate) struct AuxInfoPrecomputed<P: SchemeParams, I> {
     pub(crate) secret_aux: SecretAuxInfoPrecomputed<P>,
-    pub(crate) public_aux: BTreeMap<I, PublicAuxInfoPrecomputed<P>>,
+    pub(crate) public_aux: HashMap<I, PublicAuxInfoPrecomputed<P>>,
 }
 
 #[derive(Clone)]
@@ -80,13 +88,13 @@ pub(crate) struct PublicAuxInfoPrecomputed<P: SchemeParams> {
 }
 
 /// The result of the Auxiliary Info & Key Refresh protocol - the update to the key share.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct KeyShareChange<P: SchemeParams, I: Ord> {
+#[derive(Debug, Clone, Hash, Serialize, Deserialize)]
+pub struct KeyShareChange<P: SchemeParams, I: Ord + Hash> {
     pub(crate) owner: I,
     /// The value to be added to the secret share.
     pub(crate) secret_share_change: SecretBox<Scalar>, // `x_i^* - x_i == \sum_{j} x_j^i`
     /// The values to be added to the public shares of remote nodes.
-    pub(crate) public_share_changes: BTreeMap<I, Point>, // `X_k^* - X_k == \sum_j X_j^k`, for all nodes
+    pub(crate) public_share_changes: HashMap<I, Point>, // `X_k^* - X_k == \sum_j X_j^k`, for all nodes
     // TODO (#27): this won't be needed when Scalar/Point are a part of `P`
     pub(crate) phantom: PhantomData<P>,
 }
@@ -108,7 +116,7 @@ pub struct PresigningData<P: SchemeParams, I> {
     pub(crate) cap_k: CiphertextMod<P::Paillier>,
 
     // The values for $j$, $j != i$.
-    pub(crate) values: BTreeMap<I, PresigningValues<P>>,
+    pub(crate) values: HashMap<I, PresigningValues<P>>,
 }
 
 #[derive(Debug, Clone)]
@@ -124,7 +132,11 @@ pub(crate) struct PresigningValues<P: SchemeParams> {
     pub(crate) hat_cap_f: CiphertextMod<P::Paillier>,
 }
 
-impl<P: SchemeParams, I: Clone + Ord + PartialEq + Debug> KeyShare<P, I> {
+impl<P, I> KeyShare<P, I>
+where
+    P: SchemeParams,
+    I: Clone + Ord + PartialEq + Debug + Hash,
+{
     /// Updates a key share with a change obtained from KeyRefresh protocol.
     pub(crate) fn update(self, change: KeyShareChange<P, I>) -> Self {
         // TODO (#68): check that party_idx is the same for both, and the number of parties is the same
@@ -151,9 +163,9 @@ impl<P: SchemeParams, I: Clone + Ord + PartialEq + Debug> KeyShare<P, I> {
     /// (which in a decentralized case would be the output of KeyInit protocol).
     pub fn new_centralized(
         rng: &mut impl CryptoRngCore,
-        ids: &BTreeSet<I>,
+        ids: &HashSet<I>,
         signing_key: Option<&k256::ecdsa::SigningKey>,
-    ) -> BTreeMap<I, Self> {
+    ) -> HashMap<I, Self> {
         let secret = match signing_key {
             None => Scalar::random(rng),
             Some(sk) => Scalar::from(sk.as_nonzero_scalar()),
@@ -164,7 +176,7 @@ impl<P: SchemeParams, I: Clone + Ord + PartialEq + Debug> KeyShare<P, I> {
             .iter()
             .zip(secret_shares.iter())
             .map(|(id, secret_share)| (id.clone(), secret_share.mul_by_generator()))
-            .collect::<BTreeMap<_, _>>();
+            .collect::<HashMap<_, _>>();
 
         ids.iter()
             .zip(secret_shares)
@@ -199,12 +211,16 @@ impl<P: SchemeParams, I: Clone + Ord + PartialEq + Debug> KeyShare<P, I> {
     }
 
     /// Returns the set of parties holding other shares from the set.
-    pub fn all_parties(&self) -> BTreeSet<I> {
+    pub fn all_parties(&self) -> HashSet<I> {
         self.public_shares.keys().cloned().collect()
     }
 }
 
-impl<P: SchemeParams, I: Ord + Clone> AuxInfo<P, I> {
+impl<P, I> AuxInfo<P, I>
+where
+    P: SchemeParams,
+    I: Ord + Clone + Hash,
+{
     /// Returns the owner of this aux data.
     pub fn owner(&self) -> &I {
         &self.owner
@@ -212,7 +228,7 @@ impl<P: SchemeParams, I: Ord + Clone> AuxInfo<P, I> {
 
     /// Creates a set of random self-consistent auxiliary data.
     /// (which in a decentralized case would be the output of AuxGen protocol).
-    pub fn new_centralized(rng: &mut impl CryptoRngCore, ids: &BTreeSet<I>) -> BTreeMap<I, Self> {
+    pub fn new_centralized(rng: &mut impl CryptoRngCore, ids: &HashSet<I>) -> HashMap<I, Self> {
         let secret_aux = (0..ids.len())
             .map(|_| SecretAuxInfo {
                 paillier_sk: SecretKeyPaillier::<P::Paillier>::random(rng),
@@ -234,7 +250,7 @@ impl<P: SchemeParams, I: Ord + Clone> AuxInfo<P, I> {
                     },
                 )
             })
-            .collect::<BTreeMap<_, _>>();
+            .collect::<HashMap<_, _>>();
 
         ids.iter()
             .zip(secret_aux)
@@ -276,15 +292,19 @@ impl<P: SchemeParams, I: Ord + Clone> AuxInfo<P, I> {
     }
 }
 
-impl<P: SchemeParams, I: Ord + Clone + PartialEq> PresigningData<P, I> {
+impl<P, I> PresigningData<P, I>
+where
+    P: SchemeParams,
+    I: Ord + Clone + PartialEq + Hash,
+{
     /// Creates a consistent set of presigning data for testing purposes.
     #[cfg(any(test, feature = "bench-internals"))]
     pub(crate) fn new_centralized(
         rng: &mut impl CryptoRngCore,
-        key_shares: &BTreeMap<I, KeyShare<P, I>>,
+        key_shares: &HashMap<I, KeyShare<P, I>>,
         aux_infos: &BTreeMap<I, AuxInfo<P, I>>,
-    ) -> BTreeMap<I, Self> {
-        let ids = key_shares.keys().cloned().collect::<BTreeSet<_>>();
+    ) -> HashMap<I, Self> {
+        let ids = key_shares.keys().cloned().collect::<HashSet<_>>();
 
         let ephemeral_scalar = Scalar::random(rng);
         let nonce = ephemeral_scalar
@@ -298,7 +318,7 @@ impl<P: SchemeParams, I: Ord + Clone + PartialEq> PresigningData<P, I> {
             .iter()
             .zip(ephemeral_scalar_shares)
             .map(|(id, k)| (id.clone(), k))
-            .collect::<BTreeMap<_, _>>();
+            .collect::<HashMap<_, _>>();
 
         let public_keys = aux_infos
             .first_key_value()
@@ -307,7 +327,7 @@ impl<P: SchemeParams, I: Ord + Clone + PartialEq> PresigningData<P, I> {
             .public_aux
             .iter()
             .map(|(id, aux)| (id, aux.paillier_pk.to_precomputed()))
-            .collect::<BTreeMap<_, _>>();
+            .collect::<HashMap<_, _>>();
 
         let all_cap_k = ephemeral_scalar_shares
             .iter()
@@ -317,13 +337,13 @@ impl<P: SchemeParams, I: Ord + Clone + PartialEq> PresigningData<P, I> {
                     CiphertextMod::new(rng, &public_keys[id], &P::uint_from_scalar(k)),
                 )
             })
-            .collect::<BTreeMap<_, _>>();
+            .collect::<HashMap<_, _>>();
 
-        let mut hat_betas = BTreeMap::new();
-        let mut hat_ss = BTreeMap::new();
-        let mut hat_cap_ds = BTreeMap::new();
-        let mut hat_rs = BTreeMap::new();
-        let mut hat_cap_fs = BTreeMap::new();
+        let mut hat_betas = HashMap::new();
+        let mut hat_ss = HashMap::new();
+        let mut hat_cap_ds = HashMap::new();
+        let mut hat_rs = HashMap::new();
+        let mut hat_cap_fs = HashMap::new();
 
         for id_i in ids.iter() {
             let x_i = key_shares[id_i].secret_share.clone();
@@ -354,12 +374,12 @@ impl<P: SchemeParams, I: Ord + Clone + PartialEq> PresigningData<P, I> {
             }
         }
 
-        let mut presigning = BTreeMap::new();
+        let mut presigning = HashMap::new();
 
         for id_i in ids.iter() {
             let id_i = id_i.clone();
 
-            let mut values = BTreeMap::new();
+            let mut values = HashMap::new();
 
             for id_j in ids.iter().filter(|id| id != &&id_i) {
                 let id_ij = (id_i.clone(), id_j.clone());
@@ -423,7 +443,7 @@ impl<P: SchemeParams, I: Ord + Clone + PartialEq> PresigningData<P, I> {
 
 #[cfg(test)]
 mod tests {
-    use alloc::collections::BTreeSet;
+    use hashbrown::HashSet;
 
     use k256::ecdsa::{SigningKey, VerifyingKey};
     use rand_core::OsRng;
@@ -437,7 +457,7 @@ mod tests {
 
         let ids = (0..3)
             .map(|_| *SigningKey::random(&mut OsRng).verifying_key())
-            .collect::<BTreeSet<_>>();
+            .collect::<HashSet<_>>();
 
         let shares =
             KeyShare::<TestParams, VerifyingKey>::new_centralized(&mut OsRng, &ids, Some(&sk));

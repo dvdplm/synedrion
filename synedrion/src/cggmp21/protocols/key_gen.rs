@@ -1,10 +1,11 @@
 //! Merged KeyInit and KeyRefresh protocols, to generate a full key share in one go.
 //! Since both take three rounds and are independent, we can execute them in parallel.
 
-use alloc::collections::{BTreeMap, BTreeSet};
 use core::fmt::Debug;
+use core::hash::Hash;
 use core::marker::PhantomData;
 
+use hashbrown::{HashMap, HashSet};
 use rand_core::CryptoRngCore;
 use serde::Serialize;
 
@@ -21,7 +22,11 @@ use crate::rounds::{
 #[derive(Debug)]
 pub struct KeyGenResult<P: SchemeParams, I>(PhantomData<P>, PhantomData<I>);
 
-impl<P: SchemeParams, I: Debug + Ord> ProtocolResult for KeyGenResult<P, I> {
+impl<P, I> ProtocolResult for KeyGenResult<P, I>
+where
+    P: SchemeParams,
+    I: Debug + Ord + Hash,
+{
     type Success = (KeyShare<P, I>, AuxInfo<P, I>);
     type ProvableError = KeyGenError<P, I>;
     type CorrectnessProof = KeyGenProof<P, I>;
@@ -29,7 +34,11 @@ impl<P: SchemeParams, I: Debug + Ord> ProtocolResult for KeyGenResult<P, I> {
 
 /// Possible verifiable errors of the merged KeyGen and KeyRefresh protocols.
 #[derive(Debug)]
-pub enum KeyGenError<P: SchemeParams, I: Debug + Ord> {
+pub enum KeyGenError<P, I>
+where
+    P: SchemeParams,
+    I: Debug + Ord + Hash,
+{
     /// An error in the KeyGen part of the protocol.
     KeyInit(<KeyInitResult<P, I> as ProtocolResult>::ProvableError),
     /// An error in the KeyRefresh part of the protocol.
@@ -38,15 +47,21 @@ pub enum KeyGenError<P: SchemeParams, I: Debug + Ord> {
 
 /// A proof of a node's correct behavior for the merged KeyGen and KeyRefresh protocols.
 #[derive(Debug)]
-pub enum KeyGenProof<P: SchemeParams, I: Debug + Ord> {
+pub enum KeyGenProof<P, I>
+where
+    P: SchemeParams,
+    I: Debug + Ord + Hash,
+{
     /// A proof for the KeyGen part of the protocol.
     KeyInit(<KeyInitResult<P, I> as ProtocolResult>::CorrectnessProof),
     /// A proof for the KeyRefresh part of the protocol.
     KeyRefresh(<KeyRefreshResult<P, I> as ProtocolResult>::CorrectnessProof),
 }
 
-impl<P: SchemeParams, I: Debug + Ord> CorrectnessProofWrapper<KeyInitResult<P, I>>
-    for KeyGenResult<P, I>
+impl<P, I> CorrectnessProofWrapper<KeyInitResult<P, I>> for KeyGenResult<P, I>
+where
+    P: SchemeParams,
+    I: Debug + Ord + Hash,
 {
     fn wrap_proof(
         proof: <KeyInitResult<P, I> as ProtocolResult>::CorrectnessProof,
@@ -55,8 +70,10 @@ impl<P: SchemeParams, I: Debug + Ord> CorrectnessProofWrapper<KeyInitResult<P, I
     }
 }
 
-impl<P: SchemeParams, I: Debug + Ord> CorrectnessProofWrapper<KeyRefreshResult<P, I>>
-    for KeyGenResult<P, I>
+impl<P, I> CorrectnessProofWrapper<KeyRefreshResult<P, I>> for KeyGenResult<P, I>
+where
+    P: SchemeParams,
+    I: Debug + Ord + Hash,
 {
     fn wrap_proof(
         proof: <KeyRefreshResult<P, I> as ProtocolResult>::CorrectnessProof,
@@ -65,17 +82,21 @@ impl<P: SchemeParams, I: Debug + Ord> CorrectnessProofWrapper<KeyRefreshResult<P
     }
 }
 
-pub(crate) struct Round1<P: SchemeParams, I> {
+pub(crate) struct Round1<P: SchemeParams, I: Hash> {
     key_init_round: key_init::Round1<P, I>,
     key_refresh_round: key_refresh::Round1<P, I>,
 }
 
-impl<P: SchemeParams, I: Debug + Clone + Ord + Serialize> FirstRound<I> for Round1<P, I> {
+impl<P, I> FirstRound<I> for Round1<P, I>
+where
+    P: SchemeParams,
+    I: Debug + Clone + Ord + Serialize + Hash,
+{
     type Inputs = ();
     fn new(
         rng: &mut impl CryptoRngCore,
         shared_randomness: &[u8],
-        other_ids: BTreeSet<I>,
+        other_ids: HashSet<I>,
         my_id: I,
         _inputs: Self::Inputs,
     ) -> Result<Self, InitError> {
@@ -90,13 +111,13 @@ impl<P: SchemeParams, I: Debug + Clone + Ord + Serialize> FirstRound<I> for Roun
     }
 }
 
-impl<P: SchemeParams, I: Debug + Clone + Ord + Serialize> Round<I> for Round1<P, I> {
+impl<P: SchemeParams, I: Debug + Clone + Ord + Serialize + Hash> Round<I> for Round1<P, I> {
     type Type = ToNextRound;
     type Result = KeyGenResult<P, I>;
     const ROUND_NUM: u8 = 1;
     const NEXT_ROUND_NUM: Option<u8> = Some(2);
 
-    fn other_ids(&self) -> &BTreeSet<I> {
+    fn other_ids(&self) -> &HashSet<I> {
         self.key_init_round.other_ids()
     }
 
@@ -150,15 +171,17 @@ impl<P: SchemeParams, I: Debug + Clone + Ord + Serialize> Round<I> for Round1<P,
     }
 }
 
-impl<P: SchemeParams, I: Debug + Clone + Ord + Serialize> FinalizableToNextRound<I>
-    for Round1<P, I>
+impl<P, I> FinalizableToNextRound<I> for Round1<P, I>
+where
+    P: SchemeParams,
+    I: Debug + Clone + Ord + Serialize + Hash,
 {
     type NextRound = Round2<P, I>;
     fn finalize_to_next_round(
         self,
         rng: &mut impl CryptoRngCore,
-        payloads: BTreeMap<I, <Self as Round<I>>::Payload>,
-        _artifacts: BTreeMap<I, <Self as Round<I>>::Artifact>,
+        payloads: HashMap<I, <Self as Round<I>>::Payload>,
+        _artifacts: HashMap<I, <Self as Round<I>>::Artifact>,
     ) -> Result<Self::NextRound, FinalizeError<Self::Result>> {
         let (key_init_payloads, key_refresh_payloads) = payloads
             .into_iter()
@@ -169,11 +192,11 @@ impl<P: SchemeParams, I: Debug + Clone + Ord + Serialize> FinalizableToNextRound
 
         let key_init_round = self
             .key_init_round
-            .finalize_to_next_round(rng, key_init_payloads, BTreeMap::new())
+            .finalize_to_next_round(rng, key_init_payloads, HashMap::new())
             .map_err(wrap_finalize_error)?;
         let key_refresh_round = self
             .key_refresh_round
-            .finalize_to_next_round(rng, key_refresh_payloads, BTreeMap::new())
+            .finalize_to_next_round(rng, key_refresh_payloads, HashMap::new())
             .map_err(wrap_finalize_error)?;
         Ok(Round2 {
             key_init_round,
@@ -187,13 +210,17 @@ pub(crate) struct Round2<P: SchemeParams, I> {
     key_refresh_round: key_refresh::Round2<P, I>,
 }
 
-impl<P: SchemeParams, I: Debug + Clone + Ord + Serialize> Round<I> for Round2<P, I> {
+impl<P, I> Round<I> for Round2<P, I>
+where
+    P: SchemeParams,
+    I: Debug + Clone + Ord + Serialize + Hash,
+{
     type Type = ToNextRound;
     type Result = KeyGenResult<P, I>;
     const ROUND_NUM: u8 = 2;
     const NEXT_ROUND_NUM: Option<u8> = Some(3);
 
-    fn other_ids(&self) -> &BTreeSet<I> {
+    fn other_ids(&self) -> &HashSet<I> {
         self.key_init_round.other_ids()
     }
 
@@ -247,15 +274,17 @@ impl<P: SchemeParams, I: Debug + Clone + Ord + Serialize> Round<I> for Round2<P,
     }
 }
 
-impl<P: SchemeParams, I: Debug + Clone + Ord + Serialize> FinalizableToNextRound<I>
-    for Round2<P, I>
+impl<P, I> FinalizableToNextRound<I> for Round2<P, I>
+where
+    P: SchemeParams,
+    I: Debug + Clone + Ord + Serialize + Hash,
 {
     type NextRound = Round3<P, I>;
     fn finalize_to_next_round(
         self,
         rng: &mut impl CryptoRngCore,
-        payloads: BTreeMap<I, <Self as Round<I>>::Payload>,
-        _artifacts: BTreeMap<I, <Self as Round<I>>::Artifact>,
+        payloads: HashMap<I, <Self as Round<I>>::Payload>,
+        _artifacts: HashMap<I, <Self as Round<I>>::Artifact>,
     ) -> Result<Self::NextRound, FinalizeError<Self::Result>> {
         let (key_init_payloads, key_refresh_payloads) = payloads
             .into_iter()
@@ -266,11 +295,11 @@ impl<P: SchemeParams, I: Debug + Clone + Ord + Serialize> FinalizableToNextRound
 
         let key_init_round = self
             .key_init_round
-            .finalize_to_next_round(rng, key_init_payloads, BTreeMap::new())
+            .finalize_to_next_round(rng, key_init_payloads, HashMap::new())
             .map_err(wrap_finalize_error)?;
         let key_refresh_round = self
             .key_refresh_round
-            .finalize_to_next_round(rng, key_refresh_payloads, BTreeMap::new())
+            .finalize_to_next_round(rng, key_refresh_payloads, HashMap::new())
             .map_err(wrap_finalize_error)?;
         Ok(Round3 {
             key_init_round,
@@ -284,13 +313,17 @@ pub(crate) struct Round3<P: SchemeParams, I> {
     key_refresh_round: key_refresh::Round3<P, I>,
 }
 
-impl<P: SchemeParams, I: Debug + Clone + Ord + Serialize> Round<I> for Round3<P, I> {
+impl<P, I> Round<I> for Round3<P, I>
+where
+    P: SchemeParams,
+    I: Debug + Clone + Ord + Serialize + Hash,
+{
     type Type = ToResult;
     type Result = KeyGenResult<P, I>;
     const ROUND_NUM: u8 = 3;
     const NEXT_ROUND_NUM: Option<u8> = None;
 
-    fn other_ids(&self) -> &BTreeSet<I> {
+    fn other_ids(&self) -> &HashSet<I> {
         self.key_init_round.other_ids()
     }
 
@@ -343,12 +376,16 @@ impl<P: SchemeParams, I: Debug + Clone + Ord + Serialize> Round<I> for Round3<P,
     }
 }
 
-impl<P: SchemeParams, I: Debug + Clone + Ord + Serialize> FinalizableToResult<I> for Round3<P, I> {
+impl<P, I> FinalizableToResult<I> for Round3<P, I>
+where
+    P: SchemeParams,
+    I: Debug + Clone + Ord + Serialize + Hash,
+{
     fn finalize_to_result(
         self,
         rng: &mut impl CryptoRngCore,
-        payloads: BTreeMap<I, <Self as Round<I>>::Payload>,
-        artifacts: BTreeMap<I, <Self as Round<I>>::Artifact>,
+        payloads: HashMap<I, <Self as Round<I>>::Payload>,
+        artifacts: HashMap<I, <Self as Round<I>>::Artifact>,
     ) -> Result<<Self::Result as ProtocolResult>::Success, FinalizeError<Self::Result>> {
         let (key_init_payloads, key_refresh_payloads) = payloads
             .into_iter()
@@ -359,7 +396,7 @@ impl<P: SchemeParams, I: Debug + Clone + Ord + Serialize> FinalizableToResult<I>
 
         let key_share = self
             .key_init_round
-            .finalize_to_result(rng, key_init_payloads, BTreeMap::new())
+            .finalize_to_result(rng, key_init_payloads, HashMap::new())
             .map_err(wrap_finalize_error)?;
         let (key_share_change, aux_info) = self
             .key_refresh_round

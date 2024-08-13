@@ -2,6 +2,7 @@ use alloc::format;
 use alloc::string::String;
 use alloc::{vec, vec::Vec};
 use core::default::Default;
+use core::hash::Hash;
 use core::ops::{Add, Mul, Neg, Sub};
 
 use digest::Digest;
@@ -42,6 +43,13 @@ pub(crate) const ORDER: U256 = Secp256k1::ORDER;
 impl HashableType for Curve {
     fn chain_type<C: Chain>(digest: C) -> C {
         digest.chain(&ORDER).chain(&Point::GENERATOR)
+    }
+}
+
+impl Hash for Scalar {
+    fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
+        // TODO(dp): not at ALL sure this is ok.
+        self.0.to_bytes().hash(state);
     }
 }
 
@@ -168,6 +176,12 @@ impl CloneableSecret for Scalar {}
 
 impl SerializableSecret for Scalar {}
 
+impl Hash for Point {
+    fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
+        // TODO(dp): Is the array repr unique such that `k1 == k2 -> hash(k1) == hash(k2)` always holds?
+        self.to_compressed_array().hash(state);
+    }
+}
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Point(BackendPoint);
 
