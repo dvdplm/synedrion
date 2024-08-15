@@ -39,7 +39,7 @@ enum SessionType<Verifier, Res, Sig> {
 
 /// The session state where it is ready to send messages.
 pub struct Session<Res, Sig, Signer, Verifier> {
-    tp: SessionType<Verifier, Res, Sig>,
+    session_type: SessionType<Verifier, Res, Sig>,
     context: Context<Signer, Verifier>,
 }
 
@@ -194,7 +194,7 @@ where
         };
 
         Ok(Self {
-            tp: SessionType::Normal {
+            session_type: SessionType::Normal {
                 this_round: round,
                 broadcast: signed_broadcast,
             },
@@ -214,7 +214,7 @@ where
 
     /// Returns a pair of the current round index and whether it is an echo round.
     pub fn current_round(&self) -> (u8, bool) {
-        match &self.tp {
+        match &self.session_type {
             SessionType::Normal { this_round, .. } => (this_round.round_num(), false),
             SessionType::Echo { next_round, .. } => (next_round.round_num() - 1, true),
         }
@@ -230,7 +230,7 @@ where
         &self,
         accum: &RoundAccumulator<Sig, Verifier>,
     ) -> Result<bool, LocalError> {
-        match &self.tp {
+        match &self.session_type {
             SessionType::Normal { this_round, .. } => Ok(this_round.can_finalize(&accum.processed)),
             SessionType::Echo { echo_round, .. } => {
                 let echo_accum = accum.echo_accum.as_ref().ok_or(LocalError(
@@ -246,7 +246,7 @@ where
         &self,
         accum: &RoundAccumulator<Sig, Verifier>,
     ) -> Result<BTreeSet<Verifier>, LocalError> {
-        match &self.tp {
+        match &self.session_type {
             SessionType::Normal { this_round, .. } => {
                 Ok(this_round.missing_messages(&accum.processed))
             }
@@ -260,7 +260,7 @@ where
     }
 
     fn is_echo_round(&self) -> bool {
-        match &self.tp {
+        match &self.session_type {
             SessionType::Normal { .. } => false,
             SessionType::Echo { .. } => true,
         }
@@ -268,14 +268,14 @@ where
 
     /// Returns the party indices to which the messages of this round should be sent.
     pub fn message_destinations(&self) -> &BTreeSet<Verifier> {
-        match &self.tp {
+        match &self.session_type {
             SessionType::Normal { this_round, .. } => this_round.message_destinations(),
             SessionType::Echo { echo_round, .. } => echo_round.message_destinations(),
         }
     }
 
     fn expecting_messages_from(&self) -> &BTreeSet<Verifier> {
-        match &self.tp {
+        match &self.session_type {
             SessionType::Normal { this_round, .. } => this_round.expecting_messages_from(),
             SessionType::Echo { echo_round, .. } => echo_round.expecting_messages_from(),
         }
@@ -288,7 +288,7 @@ where
         rng: &mut impl CryptoRngCore,
         destination: &Verifier,
     ) -> Result<(MessageBundle<Sig>, Artifact<Verifier>), LocalError> {
-        match &self.tp {
+        match &self.session_type {
             SessionType::Normal {
                 this_round,
                 broadcast,
@@ -362,7 +362,7 @@ where
         from: &Verifier,
         message: &MessageBundle<Sig>,
     ) -> Result<MessageFor, Error<Res, Verifier>> {
-        let message_for = match &self.tp {
+        let message_for = match &self.session_type {
             SessionType::Normal { this_round, .. } => {
                 route_message_normal(this_round.as_ref(), message)
             }
@@ -418,7 +418,10 @@ where
             MessageFor::ThisRound => {
                 if !self.expecting_messages_from().contains(from) {
                     return Err(Error::Local(LocalError(
-                        "The sender is not in the list of expected senders.".into(),
+                        format!("The sender is not in the list of expected senders. Peers: {:?}, we got a message from {:?}",
+                            self.expecting_messages_from(),
+                            from
+                        ).into(),
                     )));
                 }
 
@@ -451,7 +454,7 @@ where
     ) -> Result<ProcessedMessage<Sig, Verifier>, Error<Res, Verifier>> {
         let from = preprocessed.from;
         let message = preprocessed.message;
-        match &self.tp {
+        match &self.session_type {
             SessionType::Normal { this_round, .. } => {
                 let result = this_round.verify_message(
                     rng,
@@ -486,7 +489,7 @@ where
         rng: &mut impl CryptoRngCore,
         accum: RoundAccumulator<Sig, Verifier>,
     ) -> Result<FinalizeOutcome<Res, Sig, Signer, Verifier>, Error<Res, Verifier>> {
-        match self.tp {
+        match self.session_type {
             SessionType::Normal { this_round, .. } => {
                 Self::finalize_regular_round(self.context, this_round, rng, accum)
             }
@@ -533,7 +536,7 @@ where
 
                     let echo_round = EchoRound::new(broadcasts);
                     let session = Session {
-                        tp: SessionType::Echo {
+                        session_type: SessionType::Echo {
                             next_round,
                             echo_round,
                         },
@@ -563,7 +566,7 @@ where
         accum: RoundAccumulator<Sig, Verifier>,
     ) -> Result<FinalizeOutcome<Res, Sig, Signer, Verifier>, Error<Res, Verifier>> {
         let echo_accum = accum.echo_accum.ok_or(Error::Local(LocalError(
-            "The accumulator is in the invalid state for the echo round".into(),
+            "The accumulator is in an invalid state for the echo round".into(),
         )))?;
 
         echo_round.finalize(echo_accum).map_err(Error::Local)?;
