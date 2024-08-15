@@ -69,8 +69,9 @@ impl Chain for FofHasher {
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
+/// The output type of [`FofHasher`]: a 32 byte long byte array.
 pub(crate) struct HashOutput(
-    // Length of the BackendDigest output. Unfortunately we can't get it in compile-time.
+    // Length of the BackendDigest output. Unfortunately we can't get it at compile-time.
     #[serde(with = "serde_bytes::as_hex")] pub(crate) [u8; 32],
 );
 
@@ -81,18 +82,22 @@ impl AsRef<[u8]> for HashOutput {
 }
 
 impl FofHasher {
+    /// Create a new [`FofHasher`].
     fn new() -> Self {
         Self(BackendDigest::new())
     }
 
+    /// Create a new [`FofHasher`] with the provided slice as the starting state.
     pub fn new_with_dst(dst: &[u8]) -> Self {
         Self::new().chain_bytes(dst)
     }
 
+    /// Finalize the [`FofHasher`] as a [`HashOutput`].
     pub(crate) fn finalize(self) -> HashOutput {
         HashOutput(self.0.finalize().into())
     }
 
+    /// Finalize the [`FofHasher`] as an elliptic curve scalar (a [`Scalar`]).
     pub fn finalize_to_scalar(self) -> Scalar {
         Scalar::from_digest(self.0)
     }
