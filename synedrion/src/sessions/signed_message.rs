@@ -48,6 +48,7 @@ fn message_hash(
 /// Protocol message type.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Eq, PartialEq)]
 pub enum MessageType {
+    /// A message sent to all participants.
     Broadcast,
     /// Regular messaging part of the round.
     Direct,
@@ -111,6 +112,8 @@ impl<Sig> SignedMessage<Sig> {
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
+/// A wrapper around [`SignedMessage`].
+// TODO(dp): Figure out what the purpose of this type is.
 pub(crate) struct VerifiedMessage<Sig>(SignedMessage<Sig>);
 
 impl<Sig> VerifiedMessage<Sig> {
@@ -122,11 +125,11 @@ impl<Sig> VerifiedMessage<Sig> {
         message_type: MessageType,
         message_bytes: &[u8],
     ) -> Result<Self, LocalError> {
-        // In order for the messages be impossible to reuse by a malicious third party,
+        // In order for the messages to be impossible to reuse by a malicious third party,
         // we need to sign, besides the message itself, the session and the round in this session
         // it belongs to.
         // We also need the exact way we sign this to be a part of the public ABI,
-        // so that these signatures could be verified by a third party.
+        // so that these signatures can be verified by a third party.
 
         let signature = signer
             .sign_prehash_with_rng(
