@@ -39,6 +39,8 @@ where
     I: Clone + Ord + PartialEq + Serialize + for<'de> Deserialize<'de>,
     Sig: Clone + Serialize + for<'de> Deserialize<'de> + PartialEq + Eq,
 {
+    /// Create a new [`EchoRound`] round for the participants listed as keys in the
+    /// `broadcasts` collection.
     pub fn new(broadcasts: BTreeMap<I, VerifiedMessage<Sig>>) -> Self {
         let destinations = broadcasts.keys().cloned().collect();
         Self {
@@ -50,11 +52,11 @@ where
     pub fn message_destinations(&self) -> &BTreeSet<I> {
         &self.destinations
     }
-
     pub fn expecting_messages_from(&self) -> &BTreeSet<I> {
         &self.destinations
     }
 
+    /// Serialize an [`EchoRound`] into a bincode encoded [`Message`].
     pub fn make_broadcast(&self) -> Box<[u8]> {
         let message = Message {
             broadcasts: self
@@ -64,6 +66,7 @@ where
                 .map(|(idx, msg)| (idx, msg.into_unverified()))
                 .collect(),
         };
+        // TODO(dp): This clones, so it shouldn't be necessary to clone the broadcasts.
         serialize_message(&message).unwrap()
     }
 
@@ -96,6 +99,7 @@ where
         Ok(())
     }
 
+    /// Returns the set of participants that have not yet replied.
     pub fn missing_messages(&self, accum: &EchoAccum<I>) -> BTreeSet<I> {
         self.expecting_messages_from()
             .difference(&accum.received_messages)
@@ -103,10 +107,12 @@ where
             .collect()
     }
 
+    /// Returns true if all expected messages have been received.
     pub fn can_finalize(&self, accum: &EchoAccum<I>) -> bool {
         &accum.received_messages == self.expecting_messages_from()
     }
 
+    /// Returns [`Ok`] if we have received all expected messages.
     pub fn finalize(self, accum: EchoAccum<I>) -> Result<(), LocalError> {
         if &accum.received_messages == self.expecting_messages_from() {
             Ok(())
