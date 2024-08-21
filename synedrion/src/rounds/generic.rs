@@ -53,7 +53,7 @@ pub(crate) trait Round<I: Ord + Clone> {
 
     /// Creates the broadcast message.
     ///
-    /// Returns ``None`` if the node does not send messages this round
+    /// Returns `None` if the node does not send messages this round
     /// (that is, [`message_destinations`] returns an empty list).
     fn make_broadcast_message(
         &self,
