@@ -10,7 +10,7 @@ mod bench {
             .with_env_filter(EnvFilter::from_default_env())
             .try_init();
 
-        let mut group = c.benchmark_group("fac proof");
+        let mut group = c.benchmark_group("Fac proof");
         group.sample_size(10);
 
         let rng = rand_chacha::ChaCha8Rng::seed_from_u64(1234567890);
