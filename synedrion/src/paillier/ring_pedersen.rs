@@ -1,9 +1,13 @@
 /// Implements the Definition 3.3 from the CGGMP'21 paper and related operations.
 use core::ops::Mul;
 
-use crypto_bigint::{modular::Retrieve, Monty, NonZero, Pow, RandomMod, ShrVartime};
+use crypto_bigint::{
+    modular::Retrieve, subtle::ConditionallySelectable, Bounded, Integer, Invert, Monty, MultiExponentiateBoundedExp,
+    NonZero, Pow, RandomMod, ShrVartime,
+};
 use rand_core::CryptoRngCore;
 use serde::{Deserialize, Serialize};
+use zeroize::Zeroize;
 
 use super::{
     rsa::{PublicModulus, PublicModulusWire, SecretPrimes, SecretPrimesWire},
@@ -11,7 +15,7 @@ use super::{
 };
 use crate::{
     tools::Secret,
-    uint::{SecretUnsigned, ToMontgomery},
+    uint::{HasWide, PublicSigned, SecretSigned, SecretUnsigned, ToMontgomery},
 };
 
 /// Ring-Pedersen secret.
@@ -104,12 +108,203 @@ impl<P: PaillierParams> RPParams<P> {
         self.modulus.monty_params_mod_n()
     }
 
-    /// Creates a commitment for a secret `value` with a secret `randomizer`.
-    pub fn commit<V, R>(&self, value: &V, randomizer: &R) -> RPCommitment<P>
+    pub fn commit_secret_wide<E>(
+        &self,
+        value: &SecretSigned<E>,
+        randomizer: &SecretSigned<<E as HasWide>::Wide>,
+    ) -> RPCommitment<P>
     where
-        P::UintMod: Pow<V> + Pow<R>,
+        E: Integer + Bounded + Zeroize + ConditionallySelectable,
+        E: HasWide,
+        <E as HasWide>::Wide: Integer + Bounded + Zeroize + ConditionallySelectable,
+        P::UintMod: MultiExponentiateBoundedExp<E::Wide, [(P::UintMod, E::Wide); 2]>,
     {
-        RPCommitment(self.base_value.pow(value) * self.base_randomizer.pow(randomizer))
+        let (bases_exponents, invert_final) = if bool::from(value.is_negative()) {
+            if bool::from(randomizer.is_negative()) {
+                (
+                    [
+                        (self.base_value, value.abs_value().expose_secret().to_wide()),
+                        (self.base_randomizer, *randomizer.abs_value().expose_secret()),
+                    ],
+                    true,
+                )
+            } else {
+                let base_value_inv = self.base_value.invert_vartime().unwrap();
+                (
+                    [
+                        (base_value_inv, value.abs_value().expose_secret().to_wide()),
+                        (self.base_randomizer, *randomizer.abs_value().expose_secret()),
+                    ],
+                    false,
+                )
+            }
+        } else {
+            if bool::from(randomizer.is_negative()) {
+                let base_randomizer_inv = self.base_randomizer.invert_vartime().unwrap();
+                (
+                    [
+                        (self.base_value, value.abs_value().expose_secret().to_wide()),
+                        (base_randomizer_inv, *randomizer.abs_value().expose_secret()),
+                    ],
+                    false,
+                )
+            } else {
+                (
+                    [
+                        (self.base_value, value.abs_value().expose_secret().to_wide()),
+                        (self.base_randomizer, *randomizer.abs_value().expose_secret()),
+                    ],
+                    false,
+                )
+            }
+        };
+        let mut product = P::UintMod::multi_exponentiate_bounded_exp(&bases_exponents, randomizer.bound());
+        if invert_final {
+            product = product.invert_vartime().unwrap();
+        }
+        RPCommitment(product)
+    }
+
+    pub fn commit_secret<E>(&self, value: &SecretSigned<E>, randomizer: &SecretSigned<E>) -> RPCommitment<P>
+    where
+        E: Integer + Bounded + Zeroize + ConditionallySelectable,
+        P::UintMod: MultiExponentiateBoundedExp<E, [(P::UintMod, E); 2]>,
+    {
+        let (bases_exponents, invert_final) = if bool::from(value.is_negative()) {
+            if bool::from(randomizer.is_negative()) {
+                (
+                    [
+                        (self.base_value, *value.abs_value().expose_secret()),
+                        (self.base_randomizer, *randomizer.abs_value().expose_secret()),
+                    ],
+                    true,
+                )
+            } else {
+                let base_value_inv = self.base_value.invert_vartime().unwrap();
+                (
+                    [
+                        (base_value_inv, *value.abs_value().expose_secret()),
+                        (self.base_randomizer, *randomizer.abs_value().expose_secret()),
+                    ],
+                    false,
+                )
+            }
+        } else {
+            if bool::from(randomizer.is_negative()) {
+                let base_randomizer_inv = self.base_randomizer.invert_vartime().unwrap();
+                (
+                    [
+                        (self.base_value, *value.abs_value().expose_secret()),
+                        (base_randomizer_inv, *randomizer.abs_value().expose_secret()),
+                    ],
+                    false,
+                )
+            } else {
+                (
+                    [
+                        (self.base_value, *value.abs_value().expose_secret()),
+                        (self.base_randomizer, *randomizer.abs_value().expose_secret()),
+                    ],
+                    false,
+                )
+            }
+        };
+        let mut product = P::UintMod::multi_exponentiate_bounded_exp(&bases_exponents, randomizer.bound());
+        if invert_final {
+            product = product.invert_vartime().unwrap();
+        }
+        RPCommitment(product)
+    }
+
+    pub fn commit_pub<E>(&self, value: &PublicSigned<E>, randomizer: &PublicSigned<E>) -> RPCommitment<P>
+    where
+        E: Integer + Bounded,
+        P::UintMod: MultiExponentiateBoundedExp<E, [(P::UintMod, E); 2]>, // <<P::UintMod as Monty>::Integer as HasWide>::Wide: E,
+    {
+        let (bases_exponents, invert_final) = if value.is_negative() {
+            if randomizer.is_negative() {
+                (
+                    [(self.base_value, value.abs()), (self.base_randomizer, randomizer.abs())],
+                    true,
+                )
+            } else {
+                let base_value_inv = self.base_value.invert_vartime().unwrap();
+                (
+                    [(base_value_inv, value.abs()), (self.base_randomizer, randomizer.abs())],
+                    false,
+                )
+            }
+        } else {
+            if randomizer.is_negative() {
+                let base_randomizer_inv = self.base_randomizer.invert_vartime().unwrap();
+                (
+                    [(self.base_value, value.abs()), (base_randomizer_inv, randomizer.abs())],
+                    false,
+                )
+            } else {
+                (
+                    [(self.base_value, value.abs()), (self.base_randomizer, randomizer.abs())],
+                    false,
+                )
+            }
+        };
+        let mut product = P::UintMod::multi_exponentiate_bounded_exp(&bases_exponents, randomizer.bound());
+        if invert_final {
+            product = product.invert_vartime().unwrap();
+        }
+        RPCommitment(product)
+    }
+
+    pub fn commit_pub_wide<E>(&self, value: &PublicSigned<E>, randomizer: &PublicSigned<E::Wide>) -> RPCommitment<P>
+    where
+        E: HasWide + Bounded,
+        E::Wide: Bounded,
+        P::UintMod: MultiExponentiateBoundedExp<E::Wide, [(P::UintMod, E::Wide); 2]>,
+    {
+        let (bases_exponents, invert_final) = if value.is_negative() {
+            if randomizer.is_negative() {
+                (
+                    [
+                        (self.base_value, value.abs().to_wide()),
+                        (self.base_randomizer, randomizer.abs()),
+                    ],
+                    true,
+                )
+            } else {
+                let base_value_inv = self.base_value.invert_vartime().unwrap();
+                (
+                    [
+                        (base_value_inv, value.abs().to_wide()),
+                        (self.base_randomizer, randomizer.abs()),
+                    ],
+                    false,
+                )
+            }
+        } else {
+            if randomizer.is_negative() {
+                let base_randomizer_inv = self.base_randomizer.invert_vartime().unwrap();
+                (
+                    [
+                        (self.base_value, value.abs().to_wide()),
+                        (base_randomizer_inv, randomizer.abs()),
+                    ],
+                    false,
+                )
+            } else {
+                (
+                    [
+                        (self.base_value, value.abs().to_wide()),
+                        (self.base_randomizer, randomizer.abs()),
+                    ],
+                    false,
+                )
+            }
+        };
+        let mut product = P::UintMod::multi_exponentiate_bounded_exp(&bases_exponents, randomizer.bound());
+        if invert_final {
+            product = product.invert_vartime().unwrap();
+        }
+        RPCommitment(product)
     }
 
     /// Creates a commitment for a secret `randomizer` and the value 0.
@@ -156,7 +351,7 @@ impl<P: PaillierParams> RPParamsWire<P> {
     }
 }
 
-#[derive(PartialEq, Eq)]
+#[derive(PartialEq, Eq, Debug)]
 pub(crate) struct RPCommitment<P: PaillierParams>(P::UintMod);
 
 impl<P: PaillierParams> RPCommitment<P> {
@@ -180,7 +375,7 @@ impl<'a, P: PaillierParams> Mul<&'a RPCommitment<P>> for &'a RPCommitment<P> {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub(crate) struct RPCommitmentWire<P: PaillierParams>(P::Uint);
 
 impl<P: PaillierParams> RPCommitmentWire<P> {

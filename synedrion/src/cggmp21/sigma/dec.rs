@@ -66,8 +66,8 @@ impl<P: SchemeParams> DecProof<P> {
         let nu = SecretSigned::random_in_exp_range_scaled(rng, P::L_BOUND + P::EPS_BOUND, hat_cap_n);
         let r = Randomizer::random(rng, public.pk0);
 
-        let cap_s = setup.commit(secret.y, &mu).to_wire();
-        let cap_t = setup.commit(&alpha, &nu).to_wire();
+        let cap_s = setup.commit_secret_wide(&secret.y, &mu).to_wire();
+        let cap_t = setup.commit_secret_wide(&alpha, &nu).to_wire();
         let cap_a = Ciphertext::new_with_randomizer_signed(public.pk0, &alpha, &r).to_wire();
 
         // `alpha` is secret, but `gamma` only uncovers $\ell$ bits of `alpha`'s full $\ell + \eps$ bits,
@@ -150,10 +150,9 @@ impl<P: SchemeParams> DecProof<P> {
         // s^{z_1} t^{z_2} == T S^e
         let cap_s = self.cap_s.to_precomputed(setup);
         let cap_t = self.cap_t.to_precomputed(setup);
-        if setup.commit(&self.z1, &self.z2) != &cap_t * &cap_s.pow(&e) {
+        if setup.commit_pub(&self.z1, &self.z2) != &cap_t * &cap_s.pow(&e) {
             return false;
         }
-
         true
     }
 }
@@ -169,7 +168,7 @@ mod tests {
         uint::SecretSigned,
     };
 
-    #[test]
+    #[test_log::test]
     fn prove_and_verify() {
         type Params = TestParams;
         type Paillier = <Params as SchemeParams>::Paillier;
